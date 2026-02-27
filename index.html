@@ -222,7 +222,7 @@ function readAnalyser(){
     S.prevRms=S.rms;
     S.rms=ema(S.rms, rms, ALPHA_F);  // raw, no scaling
 
-    if(rms<0.001){ S.onset=ema(S.onset,0,0.1); return; }
+    if(rms<0.0001){ S.onset=ema(S.onset,0,0.1); return; }
 
     const sr=audioCtx.sampleRate;
     const bHz=sr/analyserNode.fftSize;
@@ -266,6 +266,8 @@ async function init(){
         analyserNode.fftSize=4096;
         analyserNode.smoothingTimeConstant=0.75;
         pitchBuf=new Float32Array(analyserNode.fftSize);
+        // Connect analyser to destination ONCE — never disconnect this
+        analyserNode.connect(audioCtx.destination);
         await startMic();
         document.getElementById('overlay').classList.add('hidden');
         document.getElementById('ui').style.opacity='1';
@@ -287,8 +289,8 @@ async function startMic(){
     if(audioCtx.state==='suspended') await audioCtx.resume();
     micStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false},video:false});
     micSourceNode=audioCtx.createMediaStreamSource(micStream);
+    // Source → analyser (destination already wired at init, mic stays silent there)
     micSourceNode.connect(analyserNode);
-    // NOT connected to destination — no feedback loop
     setStatus('Listening','play something');
     document.getElementById('transport').classList.remove('visible');
 }
@@ -322,13 +324,11 @@ async function loadFile(e){
 async function playFile(){
     if(!fileBuffer) return;
     cleanupFile();
-    // Disconnect analyser from destination before reconnecting cleanly
-    try{analyserNode.disconnect();}catch(_){}
     if(audioCtx.state==='suspended') await audioCtx.resume();
     fileSource=audioCtx.createBufferSource();
     fileSource.buffer=fileBuffer;
+    // Source → analyser (already connected to destination at init)
     fileSource.connect(analyserNode);
-    analyserNode.connect(audioCtx.destination);
     fileSource.start(0,clamp(fileOffset,0,fileDuration-0.01));
     fileStartAt=audioCtx.currentTime-fileOffset;
     filePlaying=true;
@@ -438,7 +438,7 @@ function processVisuals(){
     readAnalyser();
 
     const rms       = S.rms;
-    const hasSignal = rms > 0.004;
+    const hasSignal = rms > 0.0008;
     const dim       = Math.min(W, H);
     animPhase      += 0.0004;
 
@@ -625,12 +625,22 @@ function draw(ts){
     }
 }
 
-function loop(ts){ draw(ts); requestAnimationFrame(loop); }
+function loop(ts){
+    // Keep AudioContext alive — Chrome suspends it if no user gesture recently
+    if(audioCtx && audioCtx.state==='suspended') audioCtx.resume();
+    draw(ts);
+    requestAnimationFrame(loop);
+}
 
 cv=document.getElementById('canvas'); cx2=cv.getContext('2d');
 function resize(){W=cv.width=window.innerWidth;H=cv.height=window.innerHeight;}
 resize();
 window.addEventListener('resize',()=>{resize();ribbon=[];});
+
+// Resume AudioContext on any click — Chrome requires user gesture
+document.addEventListener('click', ()=>{
+    if(audioCtx && audioCtx.state==='suspended') audioCtx.resume();
+});
 window.addEventListener('keydown',e=>{
     if(e.key==='l'||e.key==='L') setMode('learn');
     if(e.key==='r'||e.key==='R') setMode('reflect');
