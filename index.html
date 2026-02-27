@@ -11,6 +11,8 @@
         html,body{width:100%;height:100%;background:var(--bg);color:var(--fg);font-family:'Cormorant Garamond',Georgia,serif;overflow:hidden;user-select:none;}
         #canvas{position:fixed;top:0;left:0;width:100%;height:100%;}
         #ui{position:fixed;inset:0;pointer-events:none;display:flex;flex-direction:column;justify-content:space-between;}
+
+        /* top bar */
         #top-bar{display:flex;justify-content:space-between;align-items:flex-start;padding:28px 36px 0;pointer-events:all;}
         #wordmark{font-size:13px;font-weight:300;letter-spacing:0.4em;text-transform:uppercase;color:var(--fg-dim);line-height:1;}
         #wordmark span{display:block;font-size:9px;letter-spacing:0.5em;margin-top:6px;color:rgba(255,255,255,0.38);font-family:'JetBrains Mono',monospace;}
@@ -20,6 +22,24 @@
         .btn:hover{color:var(--fg-bright);background:rgba(255,255,255,0.08);}
         .btn.active{color:var(--fg-bright);background:rgba(255,255,255,0.13);}
         #file-input{display:none;}
+
+        /* record button */
+        #rec-btn{
+            display:flex;align-items:center;gap:8px;
+            padding:8px 20px;
+            font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:300;
+            letter-spacing:0.15em;text-transform:uppercase;
+            color:var(--fg-dim);background:rgba(5,5,8,0.92);
+            border:1px solid rgba(255,255,255,0.15);border-radius:2px;
+            cursor:pointer;transition:all 0.2s;pointer-events:all;
+        }
+        #rec-btn:hover{color:var(--fg-bright);border-color:rgba(255,255,255,0.35);}
+        #rec-btn.recording{color:#ff6b6b;border-color:rgba(255,107,107,0.5);background:rgba(255,107,107,0.08);}
+        #rec-dot{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:0.7;}
+        #rec-btn.recording #rec-dot{animation:pulse 1s infinite;}
+        @keyframes pulse{0%,100%{opacity:0.7;}50%{opacity:0.2;}}
+
+        /* transport */
         #transport{display:none;position:fixed;bottom:64px;left:0;right:0;align-items:center;gap:10px;padding:8px 36px;background:rgba(5,5,8,0.82);border-top:1px solid rgba(255,255,255,0.07);pointer-events:all;z-index:10;}
         #transport.visible{display:flex;}
         .t-btn{width:32px;height:32px;background:rgba(255,255,255,0.09);border:1px solid rgba(255,255,255,0.22);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:11px;color:var(--fg-bright);transition:background 0.2s;flex-shrink:0;}
@@ -28,13 +48,21 @@
         #progress-fill{height:100%;background:rgba(255,255,255,0.55);border-radius:2px;width:0%;pointer-events:none;}
         #time-display{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--fg-dim);flex-shrink:0;}
         #file-name{font-family:'JetBrains Mono',monospace;font-size:9px;color:rgba(255,255,255,0.45);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+        /* centre status */
         #center-status{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;transition:opacity 1.2s;}
         #status-text{font-size:15px;font-weight:300;letter-spacing:0.25em;text-transform:uppercase;color:rgba(255,255,255,0.45);}
         #status-sub{font-size:11px;font-family:'JetBrains Mono',monospace;color:rgba(255,255,255,0.28);margin-top:8px;letter-spacing:0.1em;}
+
+        /* bottom */
         #bottom-bar{padding:0 36px 22px;display:flex;justify-content:space-between;align-items:flex-end;pointer-events:none;}
         #pitch-display{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:300;letter-spacing:0.07em;color:rgba(255,255,255,0.55);line-height:2.2;}
         #legend{font-size:10px;font-family:'JetBrains Mono',monospace;color:rgba(255,255,255,0.38);text-align:right;line-height:2;letter-spacing:0.05em;}
-        #debug{position:fixed;bottom:140px;left:36px;font-family:'JetBrains Mono',monospace;font-size:9px;color:rgba(255,255,255,0.5);}
+
+        /* debug */
+        #debug{position:fixed;bottom:140px;left:36px;font-family:'JetBrains Mono',monospace;font-size:9px;color:rgba(255,255,255,0.45);}
+
+        /* splash */
         #overlay{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:100;transition:opacity 0.8s;}
         #overlay.hidden{opacity:0;pointer-events:none;}
         #overlay-title{font-size:28px;font-weight:300;letter-spacing:0.5em;text-transform:uppercase;color:var(--fg-bright);}
@@ -48,6 +76,7 @@
 <body>
 <canvas id="canvas"></canvas>
 <div id="debug"></div>
+
 <div id="overlay">
     <div id="overlay-title">See Harmony</div>
     <div id="overlay-sub">Neural Conservatory · Synesthetic Music Feedback · v0.1</div>
@@ -55,21 +84,31 @@
     <button id="start-btn" onclick="init()">Begin</button>
     <div id="error-msg"></div>
 </div>
+
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
         <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre</span></div>
         <div id="controls">
+            <!-- Record / Review mode -->
             <div class="btn-group">
-                <button class="btn active" id="btn-learn"   onclick="setMode('learn')">Learn</button>
-                <button class="btn"        id="btn-reflect" onclick="setMode('reflect')">Reflect</button>
+                <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
+                <button class="btn"        id="btn-review" onclick="setMode('review')">Review</button>
             </div>
+            <!-- Input source -->
             <div class="btn-group">
                 <button class="btn active" id="btn-mic"  onclick="switchToMic()">⬤ Mic</button>
                 <button class="btn"        id="btn-file" onclick="document.getElementById('file-input').click()">↑ File</button>
             </div>
             <input type="file" id="file-input" accept="audio/*" onchange="loadFile(event)">
+            <!-- Record button — mic mode only -->
+            <button id="rec-btn" onclick="toggleRecord()" style="display:none;">
+                <span id="rec-dot"></span>
+                <span id="rec-label">Record</span>
+            </button>
         </div>
     </div>
+
+    <!-- File transport — fixed above ribbon -->
     <div id="transport">
         <div class="t-btn" id="play-btn"  onclick="togglePlayPause()">▶</div>
         <div class="t-btn" id="stop-btn2" onclick="stopFile()" style="font-size:9px;">■</div>
@@ -77,10 +116,12 @@
         <div id="time-display">0:00 / 0:00</div>
         <div id="file-name">—</div>
     </div>
+
     <div id="center-status">
-        <div id="status-text">Listening</div>
-        <div id="status-sub">play something</div>
+        <div id="status-text">Ready</div>
+        <div id="status-sub">press Record or load a file</div>
     </div>
+
     <div id="bottom-bar">
         <div id="pitch-display">
             <div id="note-display">—</div>
@@ -93,6 +134,7 @@
         </div>
     </div>
 </div>
+
 <script>
 'use strict';
 
@@ -100,28 +142,33 @@
 // SEE HARMONY — Neural Conservatory MVP v0.1
 // Dual-layer visual architecture:
 //   Physical layer (sky)  — continuous, ratio-preserving, acoustic
-//   Semantic layer (orb)  — categorical, chord character, emotional
+//   Semantic layer (orb)  — harmonic, chord character, emotional
 // ════════════════════════════════════════════════════════════════
 
 // ── Constants ────────────────────────────────────────────────────
-const SEMI_MIN = Math.log2(82.4/440)*12;   // E2
-const SEMI_MAX = Math.log2(1318.5/440)*12; // E6
+const SEMI_MIN = Math.log2(82.4/440)*12;
+const SEMI_MAX = Math.log2(1318.5/440)*12;
 const HUE_WARM = 28, HUE_COOL = 214;
-const ALPHA = 0.14, ALPHA_F = 0.42;
+const ALPHA = 0.12, ALPHA_F = 0.38;
 const RIBBON_H = 64, RIBBON_N = 120, RIBBON_MS = 83;
 
+// Harmonic accumulator window — how many frames to average chroma over.
+// Longer = more stable chord tracking, less reactive to melody notes.
+// ~2 seconds at 60fps = 120 frames. We use a ring buffer.
+const HARM_WINDOW = 90;
+
 // Chord character map — semantic layer (Section 5.9.2b)
-// [hue, saturation, value, label-suffix]
 const CHORD_MAP = {
-    maj7: [288, 0.78, 0.82, 'maj7'],
-    min7: [183, 0.82, 0.72, 'm7'],
-    dom7: [14,  1.00, 0.88, '7'],
-    maj:  [42,  0.95, 0.92, ''],
-    min:  [235, 0.88, 0.65, 'm'],
-    dim:  [348, 0.72, 0.40, 'dim'],
-    aug:  [340, 0.60, 0.35, 'aug'],
-    sus:  [58,  0.70, 0.82, 'sus'],
+    maj7: { hue:288, sat:0.78, val:0.82, sfx:'maj7' },
+    min7: { hue:183, sat:0.82, val:0.72, sfx:'m7'   },
+    dom7: { hue:14,  sat:1.00, val:0.88, sfx:'7'    },
+    maj:  { hue:42,  sat:0.95, val:0.92, sfx:''     },
+    min:  { hue:235, sat:0.88, val:0.65, sfx:'m'    },
+    dim:  { hue:348, sat:0.72, val:0.40, sfx:'dim'  },
+    aug:  { hue:340, sat:0.60, val:0.35, sfx:'aug'  },
+    sus:  { hue:58,  sat:0.70, val:0.82, sfx:'sus'  },
 };
+// Chord interval templates
 const CHORD_TMPL = {
     maj7: [1,0,0,0,1,0,0,1,0,0,0,1],
     min7: [1,0,0,1,0,0,0,1,0,0,1,0],
@@ -137,68 +184,80 @@ const KK_MAJ = [6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
 const KK_MIN = [6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
 
 // ── Audio state ──────────────────────────────────────────────────
-let audioCtx, analyserNode, pitchBuf, silentGain;
+let audioCtx, analyserNode, silentGain, pitchBuf;
 let micStream = null, micSource = null;
 let fileBuffer = null, fileSource = null;
 let fileOffset = 0, fileStartAt = 0;
 let filePlaying = false, fileDuration = 0;
 
+// ── App state ────────────────────────────────────────────────────
+let mode       = 'play';    // 'play' | 'review'
+let recording  = false;     // ribbon is only written when true
+let inputMode  = 'mic';     // 'mic' | 'file'
+
 // ── Feature state ────────────────────────────────────────────────
 const S = {
-    pitch: 220, centroid: 1800, tension: 0.3,
-    rms: 0, onset: 0, prevRms: 0,
-    chroma: new Array(12).fill(1/12)
+    pitch:220, centroid:1800, tension:0.3,
+    rms:0, onset:0, prevRms:0,
+    chroma: new Array(12).fill(1/12),
 };
-// Dual visual layers
-const V = {
-    skyH: HUE_WARM, skyS: 0.6, skyV: 0.5,  // physical layer
-    orbH: HUE_WARM, orbS: 0.7, orbV: 0.5,  // semantic layer
-    orbR: 0, glow: 0.3
-};
-let currentChord = { hue: HUE_WARM, sat: 0.6, val: 0.5, label: '' };
 
-let ribbon = [], lastRibMs = 0, mode = 'learn', animPhase = 0;
+// Harmonic accumulator — ring buffer of chroma frames for stable chord tracking
+// Melody notes last <200ms; chords persist >500ms.
+// Averaging over HARM_WINDOW frames suppresses transient melody notes.
+const harmBuf  = Array.from({length:HARM_WINDOW}, ()=>new Array(12).fill(0));
+let   harmIdx  = 0;
+const harmAvg  = new Array(12).fill(0); // running average
+
+// Visual state
+const V = {
+    skyH:HUE_WARM, skyS:0.6, skyV:0.5,
+    orbH:HUE_WARM, orbS:0.7, orbV:0.5,
+    orbR:0, glow:0.3,
+};
+let currentChord = { hue:HUE_WARM, sat:0.6, val:0.5, label:'' };
+let ribbon = [], lastRibMs = 0, animPhase = 0;
 let cv, cx2, W, H;
 
 // ── Helpers ──────────────────────────────────────────────────────
-const clamp = (x,a,b) => Math.max(a, Math.min(b, x));
-const lerp  = (a,b,t) => a + (b-a) * clamp(t,0,1);
-const ema   = (c,t,a) => c + a * (t-c);
+const clamp = (x,a,b)=>Math.max(a,Math.min(b,x));
+const lerp  = (a,b,t)=>a+(b-a)*clamp(t,0,1);
+const ema   = (c,t,a)=>c+a*(t-c);
 
-function hsvCss(h, s, v, a=1) {
-    h = ((h%360)+360)%360;
-    const c=v*s, x=c*(1-Math.abs((h/60)%2-1)), m=v-c;
+function hsvCss(h,s,v,a=1){
+    h=((h%360)+360)%360;
+    const c=v*s,x=c*(1-Math.abs((h/60)%2-1)),m=v-c;
     let r,g,b;
     if(h<60){r=c;g=x;b=0;}else if(h<120){r=x;g=c;b=0;}
     else if(h<180){r=0;g=c;b=x;}else if(h<240){r=0;g=x;b=c;}
     else if(h<300){r=x;g=0;b=c;}else{r=c;g=0;b=x;}
-    return `rgba(${(r+m)*255|0},${(g+m)*255|0},${(b+m)*255|0},${a})`;
+    return`rgba(${(r+m)*255|0},${(g+m)*255|0},${(b+m)*255|0},${a})`;
 }
 function fmt(s){return Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');}
 function noteHz(hz){if(!hz||hz<20)return'—';const m=Math.round(69+12*Math.log2(hz/440));return NOTE_NAMES[((m%12)+12)%12]+Math.floor(m/12-1);}
 
 // ── Pitch (NSDF) ─────────────────────────────────────────────────
-function getPitch(buf, sr) {
-    const N = Math.min(buf.length, 2048);
-    let rms = 0; for(let i=0;i<N;i++) rms+=buf[i]*buf[i];
-    if(Math.sqrt(rms/N) < 0.001) return 0;
-    const lo = Math.floor(sr/1400), hi = Math.floor(sr/55);
-    let bp=-1, bv=-Infinity, prev=-1, up=false;
+function getPitch(buf,sr){
+    const N=Math.min(buf.length,2048);
+    let rms=0; for(let i=0;i<N;i++) rms+=buf[i]*buf[i];
+    if(Math.sqrt(rms/N)<0.001) return 0;
+    const lo=Math.floor(sr/1400),hi=Math.floor(sr/55);
+    let bp=-1,bv=-Infinity,prev=-1,up=false;
     for(let t=lo;t<=hi;t++){
         let n=0,d=0,L=N-t;
         for(let i=0;i<L;i++){n+=buf[i]*buf[i+t];d+=buf[i]*buf[i]+buf[i+t]*buf[i+t];}
         const ns=d<1e-10?0:2*n/d;
-        if(ns>prev) up=true;
+        if(ns>prev)up=true;
         else if(up&&prev>0.22&&ns<prev){if(prev>bv){bv=prev;bp=t-1;}up=false;}
         prev=ns;
     }
-    return bv<0.22||bp<1 ? 0 : sr/bp;
+    return bv<0.22||bp<1?0:sr/bp;
 }
 
-// ── Tonal distance ───────────────────────────────────────────────
-function tonalDist(ch) {
+// ── Tonal distance (Krumhansl-Kessler) ──────────────────────────
+function tonalDist(ch){
     const tot=ch.reduce((a,b)=>a+b,0)+1e-8;
-    const c=ch.map(x=>x/tot), mc=c.reduce((a,b)=>a+b)/12;
+    const c=ch.map(x=>x/tot),mc=c.reduce((a,b)=>a+b)/12;
     let best=-Infinity;
     for(let r=0;r<12;r++) for(const p of[KK_MAJ,KK_MIN]){
         const pv=Array.from({length:12},(_,i)=>p[(i-r+12)%12]);
@@ -206,269 +265,328 @@ function tonalDist(ch) {
         let n=0,dc=0,dp=0;
         for(let i=0;i<12;i++){const a=c[i]-mc,b=pv[i]-mp;n+=a*b;dc+=a*a;dp+=b*b;}
         const cor=n/Math.sqrt(dc*dp+1e-10);
-        if(cor>best) best=cor;
+        if(cor>best)best=cor;
     }
-    return clamp((1-best)/2, 0, 1);
+    return clamp((1-best)/2,0,1);
 }
 
-// ── Chord detection ──────────────────────────────────────────────
-function detectChord(chroma) {
-    const tot=chroma.reduce((a,b)=>a+b,0)+1e-8;
-    const c=chroma.map(x=>x/tot);
+// ── Chord detection on ACCUMULATED chroma ────────────────────────
+// Uses harmAvg (time-averaged chroma) not instantaneous chroma.
+// This filters out melody notes and tracks sustained harmony.
+//
+// Root weighting: the lowest strong pitch class is favoured as root.
+// This prevents C being reported when A is in the bass (Amaj7 ≠ Cmaj7).
+function detectChord(avgChroma){
+    const tot=avgChroma.reduce((a,b)=>a+b,0)+1e-8;
+    const c=avgChroma.map(x=>x/tot);
+
+    // Find the strongest bass candidate — the pitch class with highest
+    // energy that is also a plausible root (not just a passing tone).
+    // We weight each pitch class as a potential root by how well the
+    // remaining chroma fits a chord built on it.
     const order=['maj7','min7','dom7','maj','min','dim','aug','sus'];
-    let best={score:-Infinity, type:'maj', root:0};
+    let best={score:-Infinity,type:'maj',root:0};
+
     for(const type of order){
         const tmpl=CHORD_TMPL[type];
         for(let root=0;root<12;root++){
             let score=0;
-            for(let i=0;i<12;i++) score += c[(i+root)%12] * (tmpl[i] ? 1 : -0.4);
+            for(let i=0;i<12;i++){
+                const pc=(i+root)%12;
+                score += c[pc] * (tmpl[i] ? 2.0 : -0.5);
+            }
+            // Extra weight to root being present — prevents inversions misidentified
+            score += c[root] * 1.5;
             if(score>best.score) best={score,type,root};
         }
     }
-    const [h,s,v,sfx]=CHORD_MAP[best.type];
-    return {hue:h, sat:s, val:v, label: NOTE_NAMES[best.root]+sfx, score: best.score};
+
+    // Confidence gate — if chroma is too uniform, no clear chord
+    const maxC = Math.max(...c);
+    if(maxC < 0.12) return currentChord; // hold last chord
+
+    const cm = CHORD_MAP[best.type];
+    return {
+        hue:   cm.hue,
+        sat:   cm.sat,
+        val:   cm.val,
+        label: NOTE_NAMES[best.root] + cm.sfx,
+    };
 }
 
-// ── Feature extraction — reads directly from analyserNode ────────
-function readFeatures() {
+// ── Feature extraction ───────────────────────────────────────────
+function readFeatures(){
     if(!analyserNode) return;
-
     const fftSize  = analyserNode.fftSize;
     const binCount = analyserNode.frequencyBinCount;
     const freqData = new Float32Array(binCount);
     const timeData = new Float32Array(fftSize);
-
     analyserNode.getFloatTimeDomainData(timeData);
     analyserNode.getFloatFrequencyData(freqData);
 
     // RMS
     let rms=0; for(let i=0;i<fftSize;i++) rms+=timeData[i]*timeData[i];
-    rms = Math.sqrt(rms/fftSize);
-    S.prevRms = S.rms;
-    S.rms = ema(S.rms, rms, ALPHA_F);
+    rms=Math.sqrt(rms/fftSize);
+    S.prevRms=S.rms;
+    S.rms=ema(S.rms, rms, ALPHA_F);
+    if(rms<0.0001){S.onset=ema(S.onset,0,0.1); return;}
 
-    if(rms < 0.0001) { S.onset=ema(S.onset,0,0.1); return; }
-
-    const sr  = audioCtx.sampleRate;
-    const bHz = sr / fftSize;
+    const sr=audioCtx.sampleRate, bHz=sr/fftSize;
 
     // Spectral centroid
-    let ws=0, ss=0;
+    let ws=0,ss=0;
     for(let i=1;i<binCount;i++){
-        if(freqData[i] < -100) continue;
-        const lin = Math.pow(10, freqData[i]/20);
-        ws += lin*i*bHz; ss += lin;
+        if(freqData[i]<-100) continue;
+        const lin=Math.pow(10,freqData[i]/20);
+        ws+=lin*i*bHz; ss+=lin;
     }
-    if(ss>0) S.centroid = ema(S.centroid, clamp(ws/ss,400,5000), ALPHA);
+    if(ss>0) S.centroid=ema(S.centroid,clamp(ws/ss,400,5000),ALPHA);
 
-    // Chroma
-    const ch = new Array(12).fill(0);
+    // Instantaneous chroma
+    const ch=new Array(12).fill(0);
     for(let i=1;i<binCount;i++){
         const hz=i*bHz; if(hz<60||hz>4200) continue;
-        if(freqData[i]<-80) continue;
+        if(freqData[i]<-75) continue;
         const lin=Math.pow(10,freqData[i]/20);
-        ch[((Math.round(69+12*Math.log2(hz/440))%12)+12)%12] += lin;
+        ch[((Math.round(69+12*Math.log2(hz/440))%12)+12)%12]+=lin;
     }
-    for(let i=0;i<12;i++) S.chroma[i]=ema(S.chroma[i],ch[i],ALPHA*0.5);
-    S.tension = ema(S.tension, tonalDist(S.chroma), ALPHA);
+
+    // Normalise instantaneous chroma and add to ring buffer
+    const chTot=ch.reduce((a,b)=>a+b,0)+1e-8;
+    const chNorm=ch.map(x=>x/chTot);
+
+    // Remove oldest frame from running sum, add new frame
+    const old=harmBuf[harmIdx];
+    for(let i=0;i<12;i++){
+        harmAvg[i]+=(chNorm[i]-old[i])/HARM_WINDOW;
+        harmBuf[harmIdx][i]=chNorm[i];
+    }
+    harmIdx=(harmIdx+1)%HARM_WINDOW;
+
+    // Smooth chroma for tonal distance (can use instantaneous here)
+    for(let i=0;i<12;i++) S.chroma[i]=ema(S.chroma[i],chNorm[i],ALPHA*0.5);
+    S.tension=ema(S.tension,tonalDist(S.chroma),ALPHA);
 
     // Onset
-    const flux = Math.max(0,(rms-S.prevRms)*10);
-    S.onset = ema(S.onset, clamp(flux,0,1), ALPHA_F);
+    S.onset=ema(S.onset,clamp(Math.max(0,(rms-S.prevRms)*10),0,1),ALPHA_F);
 
     // Pitch
-    const f0 = getPitch(timeData, sr);
-    S.pitch = f0>0 ? ema(S.pitch,f0,0.22) : ema(S.pitch,220,ALPHA*0.12);
+    const f0=getPitch(timeData,sr);
+    S.pitch=f0>0?ema(S.pitch,f0,0.22):ema(S.pitch,220,ALPHA*0.12);
 }
 
 // ── init ─────────────────────────────────────────────────────────
-async function init() {
-    const b = document.getElementById('start-btn');
+async function init(){
+    const b=document.getElementById('start-btn');
     b.textContent='Starting…'; b.style.pointerEvents='none';
-    try {
-        audioCtx     = new (window.AudioContext||window.webkitAudioContext)();
-        analyserNode = audioCtx.createAnalyser();
-        analyserNode.fftSize = 4096;
-        analyserNode.smoothingTimeConstant = 0.8;
-        pitchBuf = new Float32Array(analyserNode.fftSize);
+    try{
+        audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+        analyserNode=audioCtx.createAnalyser();
+        analyserNode.fftSize=4096;
+        analyserNode.smoothingTimeConstant=0.82;
+        pitchBuf=new Float32Array(analyserNode.fftSize);
 
-        // silentGain keeps the audio graph alive so Chrome processes the analyser.
-        // For mic: gain=0 (no feedback). For file: gain=1 (you hear it).
-        silentGain = audioCtx.createGain();
-        silentGain.gain.value = 0;
+        // Silent gain keeps audio graph alive for mic without feedback
+        silentGain=audioCtx.createGain();
+        silentGain.gain.value=0;
         analyserNode.connect(silentGain);
         silentGain.connect(audioCtx.destination);
 
         await startMic();
         document.getElementById('overlay').classList.add('hidden');
-        document.getElementById('ui').style.opacity = '1';
+        document.getElementById('ui').style.opacity='1';
         requestAnimationFrame(loop);
-    } catch(err) {
-        const el = document.getElementById('error-msg');
+    }catch(err){
+        const el=document.getElementById('error-msg');
         el.style.display='block';
-        el.textContent = err.name==='NotAllowedError'
-            ? 'Microphone permission denied — please allow and reload.'
-            : 'Error: '+err.message;
+        el.textContent=err.name==='NotAllowedError'?'Microphone permission denied.':'Error: '+err.message;
         b.textContent='Try again'; b.style.pointerEvents='all';
     }
 }
 
 // ── Mic ──────────────────────────────────────────────────────────
-async function startMic() {
+async function startMic(){
     stopFileInternal();
-    if(micSource)  { try{micSource.disconnect();}catch(_){} micSource=null; }
-    if(micStream)  { micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
+    if(micSource){try{micSource.disconnect();}catch(_){} micSource=null;}
+    if(micStream){micStream.getTracks().forEach(t=>t.stop()); micStream=null;}
     if(audioCtx.state==='suspended') await audioCtx.resume();
+    silentGain.gain.value=0; // no speaker output for mic
 
-    micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false },
-        video: false
+    micStream=await navigator.mediaDevices.getUserMedia({
+        audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false},
+        video:false
     });
-    silentGain.gain.value = 0;  // mic stays silent — no feedback, no echo cancellation
-    micSource = audioCtx.createMediaStreamSource(micStream);
+    micSource=audioCtx.createMediaStreamSource(micStream);
     micSource.connect(analyserNode);
 
-    setStatus('Listening','play something');
+    inputMode='mic';
+    recording=false;
+    updateRecBtn();
+    document.getElementById('rec-btn').style.display='flex';
     document.getElementById('transport').classList.remove('visible');
+    setStatus('Ready','press Record to begin');
 }
 
-async function switchToMic() {
+async function switchToMic(){
     document.getElementById('btn-mic').classList.add('active');
     document.getElementById('btn-file').classList.remove('active');
     await startMic();
 }
 
+// ── Record toggle (mic mode) ─────────────────────────────────────
+function toggleRecord(){
+    if(!audioCtx||inputMode!=='mic') return;
+    recording=!recording;
+    if(recording){
+        ribbon=[];  // fresh ribbon on each new recording
+        setStatus('Recording','play something');
+    } else {
+        setStatus('Stopped','press Record to play again');
+    }
+    updateRecBtn();
+}
+
+function updateRecBtn(){
+    const btn=document.getElementById('rec-btn');
+    const lbl=document.getElementById('rec-label');
+    if(recording){
+        btn.classList.add('recording');
+        lbl.textContent='Stop';
+    } else {
+        btn.classList.remove('recording');
+        lbl.textContent='Record';
+    }
+}
+
 // ── File ─────────────────────────────────────────────────────────
-async function loadFile(e) {
-    const f = e.target.files[0]; if(!f) return;
-    // Disconnect mic completely
-    if(micSource)  { try{micSource.disconnect();}catch(_){} micSource=null; }
-    if(micStream)  { micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
+async function loadFile(e){
+    const f=e.target.files[0]; if(!f) return;
+    if(micSource){try{micSource.disconnect();}catch(_){} micSource=null;}
+    if(micStream){micStream.getTracks().forEach(t=>t.stop()); micStream=null;}
     stopFileInternal();
     if(audioCtx.state==='suspended') await audioCtx.resume();
 
     setStatus('Loading…','decoding audio');
-    fileBuffer   = await audioCtx.decodeAudioData(await f.arrayBuffer());
-    fileDuration = fileBuffer.duration;
-    fileOffset   = 0;
+    fileBuffer=await audioCtx.decodeAudioData(await f.arrayBuffer());
+    fileDuration=fileBuffer.duration;
+    fileOffset=0;
 
+    inputMode='file';
+    recording=true;  // file always writes to ribbon while playing
     document.getElementById('btn-mic').classList.remove('active');
     document.getElementById('btn-file').classList.add('active');
-    document.getElementById('file-name').textContent = f.name.replace(/\.[^.]+$/,'');
-    document.getElementById('time-display').textContent = '0:00 / '+fmt(fileDuration);
+    document.getElementById('rec-btn').style.display='none';
+    document.getElementById('file-name').textContent=f.name.replace(/\.[^.]+$/,'');
+    document.getElementById('time-display').textContent='0:00 / '+fmt(fileDuration);
     document.getElementById('transport').classList.add('visible');
+    ribbon=[];
     playFile();
 }
 
-function playFile() {
+function playFile(){
     if(!fileBuffer) return;
     stopFileInternal();
     if(audioCtx.state==='suspended') audioCtx.resume();
+    silentGain.gain.value=1; // hear the file
 
-    silentGain.gain.value = 1;  // hear the file through speakers
-    fileSource = audioCtx.createBufferSource();
-    fileSource.buffer = fileBuffer;
-    fileSource.connect(analyserNode);  // analyser already → silentGain → destination
-    fileSource.start(0, clamp(fileOffset, 0, fileDuration-0.01));
-    fileStartAt = audioCtx.currentTime - fileOffset;
-    filePlaying = true;
-    document.getElementById('play-btn').textContent = '⏸';
+    fileSource=audioCtx.createBufferSource();
+    fileSource.buffer=fileBuffer;
+    fileSource.connect(analyserNode);
+    fileSource.start(0,clamp(fileOffset,0,fileDuration-0.01));
+    fileStartAt=audioCtx.currentTime-fileOffset;
+    filePlaying=true;
+    recording=true;
+    document.getElementById('play-btn').textContent='⏸';
     setStatus('Playing','');
-    fileSource.onended = () => {
+    fileSource.onended=()=>{
         if(!filePlaying) return;
-        filePlaying=false; fileOffset=0;
+        filePlaying=false; fileOffset=0; recording=false;
         document.getElementById('play-btn').textContent='▶';
         setStatus('Finished','press ▶ to replay');
     };
 }
 
-function stopFileInternal() {
-    if(fileSource){ fileSource.onended=null; try{fileSource.stop();}catch(_){} try{fileSource.disconnect();}catch(_){} fileSource=null; }
-    if(silentGain) silentGain.gain.value = 0;  // mute output when file stops
+function stopFileInternal(){
+    if(fileSource){fileSource.onended=null;try{fileSource.stop();}catch(_){}try{fileSource.disconnect();}catch(_){} fileSource=null;}
+    silentGain.gain.value=0;
     filePlaying=false;
 }
 
-function pauseFile() {
+function pauseFile(){
     if(!filePlaying) return;
-    fileOffset = clamp(audioCtx.currentTime-fileStartAt, 0, fileDuration);
-    stopFileInternal();
+    fileOffset=clamp(audioCtx.currentTime-fileStartAt,0,fileDuration);
+    stopFileInternal(); recording=false;
     document.getElementById('play-btn').textContent='▶';
     setStatus('Paused','press ▶ to continue');
 }
 
-function stopFile() {
-    stopFileInternal(); fileOffset=0;
+function stopFile(){
+    stopFileInternal(); fileOffset=0; recording=false;
     document.getElementById('play-btn').textContent='▶';
     document.getElementById('progress-fill').style.width='0%';
     setStatus('Stopped','press ▶ to restart');
 }
 
-function togglePlayPause() { filePlaying ? pauseFile() : playFile(); }
+function togglePlayPause(){filePlaying?pauseFile():playFile();}
 
-function seekFile(ev) {
+function seekFile(ev){
     if(!fileBuffer) return;
-    const r = ev.currentTarget.getBoundingClientRect();
-    fileOffset = clamp((ev.clientX-r.left)/r.width, 0, 1) * fileDuration;
-    if(filePlaying) playFile();
-    else document.getElementById('progress-fill').style.width = ((fileOffset/fileDuration)*100)+'%';
+    const r=ev.currentTarget.getBoundingClientRect();
+    fileOffset=clamp((ev.clientX-r.left)/r.width,0,1)*fileDuration;
+    if(filePlaying)playFile();
+    else document.getElementById('progress-fill').style.width=((fileOffset/fileDuration)*100)+'%';
 }
 
 // ── Mode ─────────────────────────────────────────────────────────
-function setMode(m) {
+function setMode(m){
     mode=m;
-    document.getElementById('btn-learn').classList.toggle('active',  m==='learn');
-    document.getElementById('btn-reflect').classList.toggle('active',m==='reflect');
-    setStatus(m==='reflect'?'Reflect':filePlaying?'Playing':'Listening',
-              m==='reflect'?'study the harmonic trace':filePlaying?'':'play something');
+    document.getElementById('btn-play').classList.toggle('active',  m==='play');
+    document.getElementById('btn-review').classList.toggle('active',m==='review');
+    if(m==='review') setStatus('Review','study your harmonic trace');
+    else setStatus(recording?'Recording':filePlaying?'Playing':'Ready',
+                   recording?'play something':filePlaying?'':'press Record or load a file');
 }
+
 function setStatus(t,s){
     document.getElementById('status-text').textContent=t;
     document.getElementById('status-sub').textContent=s||'';
 }
 
 // ── Visual processing ─────────────────────────────────────────────
-function processVisuals() {
+function processVisuals(){
     readFeatures();
+    const rms=S.rms, hasSignal=rms>0.0005;
+    const dim=Math.min(W,H);
+    animPhase+=0.0004;
 
-    const rms = S.rms;
-    const hasSignal = rms > 0.0005;
-    const dim = Math.min(W,H);
-    animPhase += 0.0004;
+    // Physical layer — sky
+    const semi  = Math.log2(Math.max(S.pitch,20)/440)*12;
+    const skyV  = clamp(0.3+0.7*(semi-SEMI_MIN)/(SEMI_MAX-SEMI_MIN),0.3,1.0);
+    const skyS  = clamp((S.centroid-400)/4600,0.2,1.0);
+    const skyH  = lerp(HUE_WARM,HUE_COOL,S.tension);
 
-    // ── Physical layer — sky (continuous, ratio-preserving) ───────
-    const semi   = Math.log2(Math.max(S.pitch,20)/440)*12;
-    const skyV   = clamp(0.3 + 0.7*(semi-SEMI_MIN)/(SEMI_MAX-SEMI_MIN), 0.3, 1.0);
-    const skyS   = clamp((S.centroid-400)/4600, 0.2, 1.0);
-    const skyH   = lerp(HUE_WARM, HUE_COOL, S.tension);
+    // Semantic layer — orb: detect chord from time-averaged chroma
+    if(hasSignal) currentChord=detectChord(harmAvg);
 
-    // ── Semantic layer — orb (chord character map) ────────────────
-    if(hasSignal) currentChord = detectChord(S.chroma);
+    const ambH=(HUE_WARM+Math.sin(animPhase)*20+360)%360;
 
-    const ambH = (HUE_WARM + Math.sin(animPhase)*20 + 360) % 360;
-
-    if(hasSignal) {
-        V.skyH = ema(V.skyH, skyH, 0.08);
-        V.skyS = ema(V.skyS, skyS, 0.08);
-        V.skyV = ema(V.skyV, skyV, 0.08);
-        V.orbH = ema(V.orbH, currentChord.hue, 0.06);
-        V.orbS = ema(V.orbS, currentChord.sat, 0.06);
-        V.orbV = ema(V.orbV, currentChord.val, 0.06);
-        V.orbR = ema(V.orbR, dim*0.09 + S.onset*dim*0.09, 0.28);
-        V.glow = ema(V.glow, clamp(rms*80, 0.2, 1.0), 0.18);
+    if(hasSignal){
+        V.skyH=ema(V.skyH,skyH,0.08); V.skyS=ema(V.skyS,skyS,0.08); V.skyV=ema(V.skyV,skyV,0.08);
+        V.orbH=ema(V.orbH,currentChord.hue,0.06);
+        V.orbS=ema(V.orbS,currentChord.sat,0.06);
+        V.orbV=ema(V.orbV,currentChord.val,0.06);
+        V.orbR=ema(V.orbR,dim*0.09+S.onset*dim*0.09,0.28);
+        V.glow=ema(V.glow,clamp(rms*80,0.25,1.0),0.18);
     } else {
-        V.skyH = ema(V.skyH, ambH,  0.003);
-        V.skyS = ema(V.skyS, 0.55,  0.003);
-        V.skyV = ema(V.skyV, 0.45,  0.003);
-        V.orbH = ema(V.orbH, ambH,  0.003);
-        V.orbS = ema(V.orbS, 0.55,  0.003);
-        V.orbV = ema(V.orbV, 0.45,  0.003);
-        V.orbR = ema(V.orbR, dim*0.07, 0.04);
-        V.glow = ema(V.glow, 0.28,  0.04);
+        V.skyH=ema(V.skyH,ambH,0.003); V.skyS=ema(V.skyS,0.55,0.003); V.skyV=ema(V.skyV,0.45,0.003);
+        V.orbH=ema(V.orbH,ambH,0.003); V.orbS=ema(V.orbS,0.55,0.003); V.orbV=ema(V.orbV,0.45,0.003);
+        V.orbR=ema(V.orbR,dim*0.07,0.04);
+        V.glow=ema(V.glow,0.28,0.04);
     }
 }
 
 // ── Renderer ─────────────────────────────────────────────────────
-function draw(ts) {
+function draw(ts){
     if(!audioCtx) return;
     processVisuals();
 
@@ -477,9 +595,9 @@ function draw(ts) {
 
     cx2.fillStyle='#050508'; cx2.fillRect(0,0,W,H);
 
-    // Background sky — physical layer
-    const R = Math.min(W,H)*0.9;
-    const g1 = cx2.createRadialGradient(cx,cy,0,cx,cy,R);
+    // Sky — physical layer
+    const R=Math.min(W,H)*0.9;
+    const g1=cx2.createRadialGradient(cx,cy,0,cx,cy,R);
     g1.addColorStop(0,    hsvCss(sh,ss,sv,      0.95));
     g1.addColorStop(0.30, hsvCss(sh,ss,sv*0.7,  0.80));
     g1.addColorStop(0.60, hsvCss(sh,ss,sv*0.38, 0.50));
@@ -487,15 +605,15 @@ function draw(ts) {
     g1.addColorStop(1,    'rgba(5,5,8,0)');
     cx2.fillStyle=g1; cx2.fillRect(0,0,W,H);
 
-    // Drifting secondary
+    // Drifting secondary glow
     const dr=ts*0.00022;
     const ox=cx+Math.sin(dr)*W*0.06, oy=cy+Math.cos(dr*0.73)*H*0.06;
     const g2=cx2.createRadialGradient(ox,oy,0,ox,oy,R*0.5);
-    g2.addColorStop(0, hsvCss((sh+40)%360,ss*0.6,sv*0.5,0.35));
-    g2.addColorStop(1, 'rgba(5,5,8,0)');
+    g2.addColorStop(0,hsvCss((sh+40)%360,ss*0.6,sv*0.5,0.35));
+    g2.addColorStop(1,'rgba(5,5,8,0)');
     cx2.fillStyle=g2; cx2.fillRect(0,0,W,H);
 
-    // Orb halos — semantic colour bleeds outward
+    // Orb halos — chord colour bleeds outward
     for(let l=0;l<4;l++){
         const lr=(4.2+l*3.5)*oR, la=(0.14-l*0.028)*gl;
         const og=cx2.createRadialGradient(cx,cy,oR*0.2,cx,cy,lr);
@@ -504,14 +622,14 @@ function draw(ts) {
         cx2.fillStyle=og; cx2.beginPath(); cx2.arc(cx,cy,lr,0,Math.PI*2); cx2.fill();
     }
 
-    // Orb body — vivid chord colour, no crushing
+    // Orb body
     const ob=cx2.createRadialGradient(cx-oR*0.32,cy-oR*0.32,oR*0.03,cx,cy,oR);
     ob.addColorStop(0,    hsvCss(oh,os*0.4,Math.min(ov*1.6,1),0.98));
     ob.addColorStop(0.45, hsvCss(oh,os,ov,0.95));
     ob.addColorStop(1,    hsvCss(oh,os,ov*0.5,0.38));
     cx2.fillStyle=ob; cx2.beginPath(); cx2.arc(cx,cy,oR,0,Math.PI*2); cx2.fill();
 
-    // Specular
+    // Specular highlight
     const hlR=oR*0.42;
     const hl=cx2.createRadialGradient(cx-oR*0.3,cy-oR*0.3,0,cx-oR*0.3,cy-oR*0.3,hlR);
     hl.addColorStop(0,`rgba(255,255,255,${0.22*gl})`);
@@ -519,7 +637,7 @@ function draw(ts) {
     cx2.fillStyle=hl; cx2.beginPath(); cx2.arc(cx-oR*0.3,cy-oR*0.3,hlR,0,Math.PI*2); cx2.fill();
 
     // Chord label on orb
-    if(currentChord.label && gl>0.12){
+    if(currentChord.label&&gl>0.12){
         const fs=Math.max(12,oR*0.28)|0;
         cx2.font=`300 ${fs}px 'JetBrains Mono',monospace`;
         cx2.textAlign='center'; cx2.textBaseline='middle';
@@ -527,8 +645,8 @@ function draw(ts) {
         cx2.fillText(currentChord.label,cx,cy);
     }
 
-    // Ribbon
-    if(mode==='learn'&&ts-lastRibMs>RIBBON_MS){
+    // Ribbon — only written when recording is active
+    if(recording&&mode==='play'&&ts-lastRibMs>RIBBON_MS){
         ribbon.push({h:oh,s:os,v:ov,label:currentChord.label});
         if(ribbon.length>RIBBON_N) ribbon.shift();
         lastRibMs=ts;
@@ -542,10 +660,10 @@ function draw(ts) {
             const e=ribbon[i],x=sx+i*sw;
             const age=(ribbon.length-i)/ribbon.length,al=0.15+(1-age)*0.82;
             const cg=cx2.createLinearGradient(0,ry,0,H);
-            cg.addColorStop(0,   hsvCss(e.h,e.s,e.v*0.2,0));
-            cg.addColorStop(0.15,hsvCss(e.h,e.s,e.v,al));
-            cg.addColorStop(0.5, hsvCss(e.h,e.s,e.v,al));
-            cg.addColorStop(0.88,hsvCss(e.h,e.s,e.v*0.5,al*0.65));
+            cg.addColorStop(0,   hsvCss(e.h,e.s,e.v*0.2, 0));
+            cg.addColorStop(0.15,hsvCss(e.h,e.s,e.v,     al));
+            cg.addColorStop(0.5, hsvCss(e.h,e.s,e.v,     al));
+            cg.addColorStop(0.88,hsvCss(e.h,e.s,e.v*0.5, al*0.65));
             cg.addColorStop(1,   hsvCss(e.h,e.s,e.v*0.08,0));
             cx2.fillStyle=cg; cx2.fillRect(x,ry,sw+0.8,RIBBON_H);
             if(e.label&&i>0&&ribbon[i-1].label!==e.label&&(1-age)>0.08){
@@ -557,11 +675,12 @@ function draw(ts) {
                 cx2.restore();
             }
         }
+        // Playhead
         cx2.fillStyle='rgba(255,255,255,0.45)';
         cx2.fillRect(Math.floor(sx+ribbon.length*sw)-1,ry+5,2,RIBBON_H-10);
     }
 
-    // Progress bar (file mode)
+    // File progress
     if(filePlaying&&fileDuration>0){
         const el=clamp(audioCtx.currentTime-fileStartAt,0,fileDuration);
         document.getElementById('progress-fill').style.width=(el/fileDuration*100)+'%';
@@ -574,25 +693,25 @@ function draw(ts) {
         document.getElementById('note-display').textContent=`♩  ${noteHz(S.pitch)}  (${Math.round(S.pitch)} Hz)`;
         const tl=S.tension<0.32?'consonant':S.tension<0.52?'neutral':S.tension<0.72?'tense':'dissonant';
         document.getElementById('tension-display').textContent=`◈  ${tl}  (${Math.round(S.tension*100)}%)`;
-        document.getElementById('center-status').style.opacity=S.rms>0.001?'0':'1';
+        document.getElementById('center-status').style.opacity=(S.rms>0.001&&(recording||filePlaying))?'0':'1';
         document.getElementById('debug').textContent=
-            `rms:${S.rms.toFixed(4)}  cent:${S.centroid|0}  ten:${S.tension.toFixed(2)}  chord:${currentChord.label||'—'}  glow:${V.glow.toFixed(2)}`;
+            `rms:${S.rms.toFixed(4)}  chord:${currentChord.label||'—'}  rec:${recording}`;
     }
 }
 
 function loop(ts){ draw(ts); requestAnimationFrame(loop); }
 
-// Canvas
+// ── Canvas & keys ─────────────────────────────────────────────────
 cv=document.getElementById('canvas'); cx2=cv.getContext('2d');
 function resize(){W=cv.width=window.innerWidth;H=cv.height=window.innerHeight;}
 resize();
 window.addEventListener('resize',()=>{resize();ribbon=[];});
-document.addEventListener('click',()=>{ if(audioCtx&&audioCtx.state==='suspended') audioCtx.resume(); });
+document.addEventListener('click',()=>{if(audioCtx&&audioCtx.state==='suspended')audioCtx.resume();});
 window.addEventListener('keydown',e=>{
-    if(e.key==='l'||e.key==='L') setMode('learn');
-    if(e.key==='r'||e.key==='R') setMode('reflect');
+    if(e.key==='p'||e.key==='P') setMode('play');
+    if(e.key==='r'||e.key==='R') setMode('review');
     if(e.key==='m'||e.key==='M') switchToMic();
-    if(e.key===' '){e.preventDefault();if(fileBuffer)togglePlayPause();}
+    if(e.key===' '){e.preventDefault();inputMode==='mic'?toggleRecord():togglePlayPause();}
 });
 </script>
 </body>
