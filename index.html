@@ -344,10 +344,6 @@ function readFeatures(){
     for(let i=0;i<12;i++) S.chroma[i]=ema(S.chroma[i],ch2[i]/c2t,ALPHA*0.5);
     S.tension=ema(S.tension,tonalDist(Array.from(S.chroma)),ALPHA);
 
-    // Instant chroma for tonal distance (can be noisy, that's fine)
-    for(let i=0;i<12;i++) S.chroma[i]=ema(S.chroma[i],chNorm[i],ALPHA*0.5);
-    S.tension=ema(S.tension,tonalDist(Array.from(S.chroma)),ALPHA);
-
     // Onset
     S.onset=ema(S.onset,clamp(Math.max(0,(rms-S.prevRms)*12),0,1),ALPHA_F);
     // Pitch
@@ -405,8 +401,11 @@ async function init(){
         analyserChord.fftSize=8192;
         analyserChord.smoothingTimeConstant=0.92;
 
-        // source → lowpassFilter → analyserChord (no destination needed)
+        // analyserNode → lowpassFilter → analyserChord → silentGain
+        // analyserChord MUST have a path to destination or Chrome won't process it
+        analyserNode.connect(lowpassFilter);
         lowpassFilter.connect(analyserChord);
+        analyserChord.connect(silentGain);
         await startMic();
         document.getElementById('overlay').classList.add('hidden');
         document.getElementById('ui').style.opacity='1';
