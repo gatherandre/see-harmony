@@ -64,7 +64,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v28</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v30</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -197,7 +197,10 @@ const bassBuf = Array.from({length:HARM_WIN},()=>new Float32Array(12));
 
 let currentChord={hue:HUE_WARM,sat:0.6,val:0.5,label:''};
 const voteBuffer=[];
-const VOTE_N=24;  // ~0.4s at 60fps
+const VOTE_N=36;     // ~0.6s at 60fps
+const MIN_VOTE_FRAC=0.40;  // 40% majority to change
+let chordHoldFrames=0;     // frames since last chord change
+const MIN_HOLD=60;         // minimum 1s hold before changing
 // Key detection state
 let detectedKey=0, detectedMode='maj';
 let diatonicSet=[];       // [{root, type}] — allowed chords
@@ -274,7 +277,7 @@ function buildDiatonicSet(key,mode){
         const root=(key+scale[i])%12,q=quals[i];
         add(root,q);
         if(q==='maj'){add(root,'maj7');}
-        if(q==='min'){add(root,'min7');add(root,'minmaj7');}
+        if(q==='min'){add(root,'min7');}
         if(q==='dim'){add(root,'m7b5');add(root,'dim7');}
         if(i===4){add(root,'dom7');}
     }
@@ -340,7 +343,7 @@ function detectChord(){
     const searchSet = keyLocked ? diatonicSet : (() => {
         const s=[];
         for(let r=0;r<12;r++)
-            for(const t of ['maj','min','dim','aug','maj7','min7','dom7','dim7','m7b5','minmaj7'])
+            for(const t of ['maj','min','dim','aug','maj7','min7','dom7','dim7','m7b5'])
                 s.push({root:r,type:t});
         return s;
     })();
@@ -411,12 +414,12 @@ function readFeatures(){
         const cBHz   = sr / analyserChord.fftSize;       // Hz per bin
         const ch     = new Float32Array(12);
 
-        // Full chroma: 82–500Hz (chord tones)
-        // Bass chroma: 82–200Hz (root detection — below melody range)
+        // Full chroma: 82–350Hz (below singing voice)
+        // Bass chroma: 82–200Hz (root detection)
         const chBass = new Float32Array(12);
         for(let i=1;i<cfSize;i++){
             const hz=i*cBHz;
-            if(hz<82||hz>500) continue;
+            if(hz<82||hz>350) continue;
             if(cFreq[i]<-72)  continue;
             const lin=Math.pow(10,cFreq[i]/20);
             const pc=((Math.round(69+12*Math.log2(hz/440))%12)+12)%12;
@@ -525,7 +528,7 @@ async function init(){
         // the main graph keeps the context alive.
         lowpassFilter=audioCtx.createBiquadFilter();
         lowpassFilter.type='lowpass';
-        lowpassFilter.frequency.value=500;
+        lowpassFilter.frequency.value=350;  // below singing voice range
         lowpassFilter.Q.value=0.8;
 
         analyserChord=audioCtx.createAnalyser();
@@ -580,7 +583,7 @@ async function switchToMic(){
 function resetHarmBuf(){
     for(let i=0;i<HARM_WIN;i++){ harmBuf[i].fill(0); bassBuf[i].fill(0); }
     harmSum.fill(0); bassSum.fill(0); harmIdx=0; harmFilled=0;
-    voteBuffer.length=0;
+    voteBuffer.length=0; chordHoldFrames=0;
     keyChroma.fill(0); keyFrames=0; keyLocked=false; diatonicSet=[];
     currentChord={hue:HUE_WARM,sat:0.6,val:0.5,label:''};
 }
