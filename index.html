@@ -309,10 +309,12 @@ function readFeatures(){
         const cBHz   = sr / analyserChord.fftSize;       // Hz per bin
         const ch     = new Float32Array(12);
 
-        // Extract chroma from 55–380Hz only (below lowpass cutoff)
+        // Extract chroma from 82–500Hz only.
+        // 82Hz = E2 (lowest guitar string) — below this is kick drum, not harmony.
+        // 500Hz = above this, melody starts to dominate.
         for(let i=1;i<cfSize;i++){
             const hz=i*cBHz;
-            if(hz<55||hz>380) continue;
+            if(hz<82||hz>500) continue;
             if(cFreq[i]<-72)  continue;  // ignore very weak bins
             const lin=Math.pow(10,cFreq[i]/20);
             const pc=((Math.round(69+12*Math.log2(hz/440))%12)+12)%12;
@@ -394,8 +396,8 @@ async function init(){
         // the main graph keeps the context alive.
         lowpassFilter=audioCtx.createBiquadFilter();
         lowpassFilter.type='lowpass';
-        lowpassFilter.frequency.value=380;
-        lowpassFilter.Q.value=0.7;
+        lowpassFilter.frequency.value=500;
+        lowpassFilter.Q.value=0.8;
 
         analyserChord=audioCtx.createAnalyser();
         analyserChord.fftSize=8192;
@@ -820,7 +822,7 @@ function runDiagnostic(){
     const peaks = [];
     for(let i=1;i<binCount;i++){
         const hz=i*bHz;
-        if(hz<40||hz>420) continue;
+        if(hz<82||hz>500) continue;
         if(freqData[i]<-80) continue;
         const lin=Math.pow(10,freqData[i]/20);
         const pc=((Math.round(69+12*Math.log2(hz/440))%12)+12)%12;
@@ -828,7 +830,7 @@ function runDiagnostic(){
         peaks.push({hz,db:freqData[i],pc});
     }
     peaks.sort((a,b)=>b.db-a.db);
-    console.log('Top 10 frequency peaks (55-420Hz):');
+    console.log('Top 10 frequency peaks (82-500Hz):');
     peaks.slice(0,10).forEach(p=>
         console.log(`  ${p.hz.toFixed(1)}Hz  ${NOTES[p.pc]}  ${p.db.toFixed(1)}dB`)
     );
