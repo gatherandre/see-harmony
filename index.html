@@ -220,7 +220,8 @@ function readAnalyser(){
     let rms=0; for(let i=0;i<timeData.length;i++) rms+=timeData[i]*timeData[i];
     rms=Math.sqrt(rms/timeData.length);
     S.prevRms=S.rms;
-    S.rms=ema(S.rms, rms, ALPHA_F);  // raw, no scaling
+    // Mic signal is tiny (0.001–0.02 range) — scale up hard
+    S.rms=ema(S.rms, Math.min(rms * 40, 1.0), ALPHA_F);
 
     if(rms<0.0001){ S.onset=ema(S.onset,0,0.1); return; }
 
@@ -413,7 +414,7 @@ function detectChord(chroma) {
     }
 
     // Confidence threshold — below this, no clear chord
-    if (best.score < 0.18) {
+    if (best.score < 0.08) {
         const [h,s,v,lbl] = CHORD_MAP.none;
         return { type:'none', root:0, hue:h, sat:s, val:v, label:lbl };
     }
@@ -446,7 +447,8 @@ function processVisuals(){
     // Continuous, ratio-preserving, psychophysically grounded.
     // Controls background field only — no harmonic interpretation.
     const semi    = Math.log2(Math.max(S.pitch, 20) / 440) * 12;
-    const skyVal  = clamp((semi - SEMI_MIN) / (SEMI_MAX - SEMI_MIN), 0.12, 1.0);
+    // Remap: low notes = dim but visible (0.25), high notes = bright (1.0)
+    const skyVal  = clamp(0.25 + 0.75 * (semi - SEMI_MIN) / (SEMI_MAX - SEMI_MIN), 0.25, 1.0);
     // Saturation: full range 0→1, no artificial floor
     const skySat  = clamp((S.centroid - 400) / 4600, 0.0, 1.0);
     // Hue: warm→cool tracks tonal distance (physical layer)
@@ -468,23 +470,23 @@ function processVisuals(){
     if (hasSignal) {
         // Sky: physical layer — smooth, continuous
         V.skyHue = ema(V.skyHue || skyHue, skyHue, 0.10);
-        V.skySat = ema(V.skySat || skySat, skySat, 0.10);
-        V.skyVal = ema(V.skyVal || skyVal, skyVal, 0.10);
+        V.skySat = ema(V.skySat || skySat, Math.max(skySat, 0.5), 0.10);
+        V.skyVal = ema(V.skyVal || skyVal, Math.max(skyVal, 0.35), 0.10);
         // Orb: semantic layer — slightly slower for visual stability
         V.hue    = ema(V.hue,  orbHue, 0.07);
-        V.sat    = ema(V.sat,  orbSat, 0.07);
-        V.val    = ema(V.val,  orbVal, 0.07);
-        V.orbR   = ema(V.orbR, dim * 0.08 + S.onset * dim * 0.09, 0.3);
-        V.glow   = ema(V.glow, clamp(rms * 7, 0, 1), 0.22);
+        V.sat    = ema(V.sat,  Math.max(orbSat, 0.6),  0.07);
+        V.val    = ema(V.val,  Math.max(orbVal, 0.55), 0.07);
+        V.orbR   = ema(V.orbR, dim * 0.09 + S.onset * dim * 0.09, 0.3);
+        V.glow   = ema(V.glow, Math.max(S.rms, 0.35), 0.22);
     } else {
         V.skyHue = ema(V.skyHue || ambHue, ambHue, 0.003);
-        V.skySat = ema(V.skySat || 0.35, 0.35, 0.003);
-        V.skyVal = ema(V.skyVal || 0.22, 0.22, 0.003);
+        V.skySat = ema(V.skySat || 0.55, 0.55, 0.003);
+        V.skyVal = ema(V.skyVal || 0.45, 0.45, 0.003);
         V.hue    = ema(V.hue,  ambHue, 0.003);
-        V.sat    = ema(V.sat,  0.35,   0.003);
-        V.val    = ema(V.val,  0.22,   0.003);
-        V.orbR   = ema(V.orbR, dim * 0.065, 0.04);
-        V.glow   = ema(V.glow, 0.06,   0.04);
+        V.sat    = ema(V.sat,  0.55,   0.003);
+        V.val    = ema(V.val,  0.45,   0.003);
+        V.orbR   = ema(V.orbR, dim * 0.07, 0.04);
+        V.glow   = ema(V.glow, 0.25,   0.04);
     }
 }
 
