@@ -121,7 +121,7 @@ const RIBBON_H  = 64, RIBBON_N = 120, RIBBON_MS = 83;
 // Harmonic accumulator — large window suppresses melody, reveals harmony.
 // Key insight: melody notes are brief (<300ms), chord tones persist (>1s).
 // At 60fps, 180 frames = 3 seconds of accumulation.
-const HARM_WIN  = 180;
+const HARM_WIN  = 30;   // ~0.5s at 60fps — responsive without blurring chord boundaries
 
 // Low-frequency bias for chroma extraction.
 // Harmony lives in lower registers; melody in upper.
@@ -183,6 +183,8 @@ const bassSum = new Float32Array(12);  // running sum — bass register only (55
 const bassBuf = Array.from({length:HARM_WIN},()=>new Float32Array(12));
 
 let currentChord={hue:HUE_WARM,sat:0.6,val:0.5,label:''};
+const voteBuffer=[];   // last N chord detections for majority vote
+const VOTE_N=6;        // vote window (~0.1s at 60fps)
 const V={skyH:HUE_WARM,skyS:0.55,skyV:0.45,orbH:HUE_WARM,orbS:0.6,orbV:0.45,orbR:0,glow:0.3};
 let ribbon=[], lastRibMs=0, animPhase=0;
 let cv, cx2, W, H;
@@ -238,60 +240,59 @@ function tonalDist(ch){
     return clamp((1-best)/2,0,1);
 }
 
-// ── Chord detection ──────────────────────────────────────────────
+// ── Chord detection — global best matching ───────────────────────
+// Tests ALL 144 combinations (12 roots × 12 types) simultaneously.
+// No root-first assumption — avoids the root/fifth confusion entirely.
+// Then applies a vote buffer to smooth frame-to-frame flickering.
 function detectChord(){
     const n = Math.min(harmFilled, HARM_WIN);
-    if(n < 20) return;
+    if(n < 10) return;
 
     // Normalised accumulated chroma
     const ch = new Float32Array(12);
     let tot=0;
     for(let i=0;i<12;i++){ ch[i]=harmSum[i]/n; tot+=ch[i]; }
-    if(tot < 1e-6) return;
+    if(tot<1e-6) return;
     for(let i=0;i<12;i++) ch[i]/=tot;
+    if(Math.max(...ch)<0.09) return;
 
-    const maxC = Math.max(...ch);
-    if(maxC < 0.10) return;
-
-    // ── Root finding with fifth-check ─────────────────────────────
-    // Problem: on guitar, the fifth often rings louder than the root
-    // (e.g. open E strings dominate Am, making algorithm pick Em).
-    // Fix: if the strongest note X could be the fifth of some chord
-    // whose root (X - 7 semitones) is also meaningfully present,
-    // prefer the lower root candidate.
-    let root=0, rootVal=0;
-    for(let i=0;i<12;i++) if(ch[i]>rootVal){ rootVal=ch[i]; root=i; }
-
-    // Check: is there a note 7 semitones below (the fourth interval)
-    // that could be the real root? If it's at least 55% as strong, prefer it.
-    const fifthRoot = (root - 7 + 12) % 12;  // if root is fifth, this is the real root
-    if(ch[fifthRoot] >= rootVal * 0.55){
-        // Also verify: does the chord built on fifthRoot fit the chroma
-        // better than the chord built on root?
-        let scoreOnFifthRoot = 0, scoreOnRoot = 0;
-        const majTmpl = CHORD_TMPL['maj'];
-        const minTmpl = CHORD_TMPL['min'];
-        for(let i=0;i<12;i++){
-            const bestTmpl = ch[(i+fifthRoot)%12] > ch[(i+root)%12] ? minTmpl : majTmpl;
-            scoreOnFifthRoot += ch[(i+fifthRoot)%12] * (minTmpl[i] ? 1.5 : -0.3);
-            scoreOnRoot      += ch[(i+root)%12]      * (majTmpl[i] ? 1.5 : -0.3);
-        }
-        if(scoreOnFifthRoot > scoreOnRoot * 0.85) root = fifthRoot;
-    }
-
-    // ── Quality match with root fixed ─────────────────────────────
+    // Global best: try every root × every quality
     const order=['maj7','min7','dom7','maj','min','dim','aug','sus'];
-    let bestType='maj', bestScore=-Infinity;
-    for(const type of order){
-        const tmpl=CHORD_TMPL[type];
-        let score=0;
-        for(let i=0;i<12;i++)
-            score += ch[(i+root)%12] * (tmpl[i] ? 2.5 : -0.8);
-        if(score>bestScore){ bestScore=score; bestType=type; }
+    let bestScore=-Infinity, bestRoot=0, bestType='maj';
+    for(let r=0;r<12;r++){
+        for(const type of order){
+            const tmpl=CHORD_TMPL[type];
+            let score=0;
+            for(let i=0;i<12;i++)
+                score += ch[(i+r)%12] * (tmpl[i] ? 2.5 : -0.8);
+            if(score>bestScore){ bestScore=score; bestRoot=r; bestType=type; }
+        }
     }
 
+    // Vote buffer — majority over last VOTE_N detections
+    const label = NOTES[bestRoot] + CHORD_MAP[bestType].sfx;
+    voteBuffer.push(label);
+    if(voteBuffer.length > VOTE_N) voteBuffer.shift();
+
+    // Count votes
+    const votes={};
+    for(const v of voteBuffer) votes[v]=(votes[v]||0)+1;
+    let winner=label, winCount=0;
+    for(const [k,v] of Object.entries(votes)) if(v>winCount){winner=k;winCount=v;}
+
+    // Find the chord map entry for the winner
+    // winner format: e.g. "Am7", "Cmaj7", "G7", "F"
+    for(let r=0;r<12;r++){
+        for(const type of order){
+            const candidate = NOTES[r] + CHORD_MAP[type].sfx;
+            if(candidate===winner){
+                const cm=CHORD_MAP[type];
+                return {hue:cm.h, sat:cm.s, val:cm.v, label:winner};
+            }
+        }
+    }
     const cm=CHORD_MAP[bestType];
-    return { hue:cm.h, sat:cm.s, val:cm.v, label:NOTES[root]+cm.sfx };
+    return {hue:cm.h, sat:cm.s, val:cm.v, label:winner};
 }
 
 // ── Feature extraction ───────────────────────────────────────────
@@ -470,6 +471,7 @@ async function switchToMic(){
 function resetHarmBuf(){
     for(let i=0;i<HARM_WIN;i++){ harmBuf[i].fill(0); bassBuf[i].fill(0); }
     harmSum.fill(0); bassSum.fill(0); harmIdx=0; harmFilled=0;
+    voteBuffer.length=0;
     currentChord={hue:HUE_WARM,sat:0.6,val:0.5,label:''};
 }
 
