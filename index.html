@@ -381,29 +381,31 @@ async function init(){
         analyserNode.fftSize=4096;
         analyserNode.smoothingTimeConstant=0.85;
         pitchBuf=new Float32Array(analyserNode.fftSize);
+        // analyserNode connects directly to destination.
+        // For mic: this means you'd hear yourself — we'll mute via gain on mic source.
+        // For file: you hear it normally.
         silentGain=audioCtx.createGain();
         silentGain.gain.value=0;
         analyserNode.connect(silentGain);
         silentGain.connect(audioCtx.destination);
+        // Also connect analyserNode directly so it's never optimised away
+        analyserNode.connect(audioCtx.destination);
 
         // Low-pass filter for chord detection.
-        // Melody lives 400Hz–4kHz. Chord roots/tones live 55–400Hz.
-        // Python analysis confirmed: A2=110Hz, E2=82Hz dominate — well below 400Hz.
+        // Taps off the main analyserNode which is already connected to destination.
+        // The chord branch doesn't need its own destination connection —
+        // the main graph keeps the context alive.
         lowpassFilter=audioCtx.createBiquadFilter();
         lowpassFilter.type='lowpass';
-        lowpassFilter.frequency.value=380;  // slightly below 400 for clean cutoff
-        lowpassFilter.Q.value=0.7;          // Butterworth-like (matches scipy butter)
+        lowpassFilter.frequency.value=380;
+        lowpassFilter.Q.value=0.7;
 
         analyserChord=audioCtx.createAnalyser();
-        analyserChord.fftSize=8192;         // higher resolution for low frequencies
+        analyserChord.fftSize=8192;
         analyserChord.smoothingTimeConstant=0.92;
 
-        // Dedicated silent gain for chord branch — keeps graph alive independently
-        const chordGain=audioCtx.createGain();
-        chordGain.gain.value=0.0001;        // not zero — prevents Chrome optimising away
+        // source → lowpassFilter → analyserChord (no destination needed)
         lowpassFilter.connect(analyserChord);
-        analyserChord.connect(chordGain);
-        chordGain.connect(audioCtx.destination);
         await startMic();
         document.getElementById('overlay').classList.add('hidden');
         document.getElementById('ui').style.opacity='1';
@@ -427,7 +429,8 @@ async function startMic(){
         audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false},video:false});
     micSource=audioCtx.createMediaStreamSource(micStream);
     micSource.connect(analyserNode);
-    micSource.connect(lowpassFilter);  // also feed chord analyser
+    // lowpassFilter and analyserChord automatically receive signal
+    // because analyserNode.connect(lowpassFilter) is set up at init
     inputMode='mic'; recording=false;
     resetHarmBuf();
     document.getElementById('rec-btn').style.display='flex';
@@ -511,13 +514,11 @@ function playFile(){
         fileSource.connect(splitter);
         splitter.connect(analyserL,0);
         splitter.connect(analyserR,1);
-        fileSource.connect(analyserNode);     // main analyser: full mix
-        fileSource.connect(lowpassFilter);   // chord analyser: bass only
+        fileSource.connect(analyserNode);     // main analyser (feeds lowpass automatically)
     } else {
         if(analyserL){try{analyserL.disconnect();}catch(_){} analyserL=null;}
         if(analyserR){try{analyserR.disconnect();}catch(_){} analyserR=null;}
-        fileSource.connect(analyserNode);
-        fileSource.connect(lowpassFilter);  // chord analyser
+        fileSource.connect(analyserNode);  // lowpass taps from analyserNode
     }
     fileSource.start(0,clamp(fileOffset,0,fileDuration-0.01));
     fileStartAt=audioCtx.currentTime-fileOffset;
