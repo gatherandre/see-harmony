@@ -267,8 +267,6 @@ async function init(){
         analyserNode.fftSize=4096;
         analyserNode.smoothingTimeConstant=0.75;
         pitchBuf=new Float32Array(analyserNode.fftSize);
-        // Connect analyser to destination ONCE — never disconnect this
-        analyserNode.connect(audioCtx.destination);
         await startMic();
         document.getElementById('overlay').classList.add('hidden');
         document.getElementById('ui').style.opacity='1';
@@ -289,9 +287,11 @@ async function startMic(){
     if(micStream) micStream.getTracks().forEach(t=>t.stop());
     if(audioCtx.state==='suspended') await audioCtx.resume();
     micStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false},video:false});
+    // Disconnect analyser from destination (was connected for file playback)
+    try{ analyserNode.disconnect(audioCtx.destination); }catch(_){}
     micSourceNode=audioCtx.createMediaStreamSource(micStream);
-    // Source → analyser (destination already wired at init, mic stays silent there)
     micSourceNode.connect(analyserNode);
+    // mic NOT connected to destination — prevents echo cancellation killing signal
     setStatus('Listening','play something');
     document.getElementById('transport').classList.remove('visible');
 }
@@ -328,8 +328,8 @@ async function playFile(){
     if(audioCtx.state==='suspended') await audioCtx.resume();
     fileSource=audioCtx.createBufferSource();
     fileSource.buffer=fileBuffer;
-    // Source → analyser (already connected to destination at init)
     fileSource.connect(analyserNode);
+    analyserNode.connect(audioCtx.destination);   // file plays through speakers
     fileSource.start(0,clamp(fileOffset,0,fileDuration-0.01));
     fileStartAt=audioCtx.currentTime-fileOffset;
     filePlaying=true;
