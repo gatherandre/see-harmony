@@ -130,27 +130,40 @@ const BASS_BIAS = 4.0;   // multiply weight of bass octave bins
 const BASS_HZ   = 500;   // threshold below which bass bias applies
 
 const CHORD_MAP = {
-    maj7: {h:288,s:0.78,v:0.82,sfx:'maj7'},
-    min7: {h:183,s:0.82,v:0.72,sfx:'m7'},
-    dom7: {h:14, s:1.00,v:0.88,sfx:'7'},
-    maj:  {h:42, s:0.95,v:0.92,sfx:''},
-    min:  {h:235,s:0.88,v:0.65,sfx:'m'},
-    dim:  {h:348,s:0.72,v:0.40,sfx:'dim'},
-    aug:  {h:340,s:0.60,v:0.35,sfx:'aug'},
-    sus:  {h:58, s:0.70,v:0.82,sfx:'sus'},
+    maj:    {h:42, s:0.95,v:0.92,sfx:''},
+    min:    {h:235,s:0.88,v:0.65,sfx:'m'},
+    dim:    {h:348,s:0.72,v:0.40,sfx:'dim'},
+    aug:    {h:340,s:0.60,v:0.35,sfx:'aug'},
+    maj7:   {h:288,s:0.78,v:0.82,sfx:'maj7'},
+    min7:   {h:200,s:0.82,v:0.72,sfx:'m7'},
+    dom7:   {h:14, s:1.00,v:0.88,sfx:'7'},
+    dim7:   {h:355,s:0.68,v:0.38,sfx:'dim7'},
+    m7b5:   {h:320,s:0.65,v:0.42,sfx:'m7b5'},
+    minmaj7:{h:210,s:0.90,v:0.68,sfx:'mM7'},
+    sus:    {h:58, s:0.70,v:0.82,sfx:'sus'},
 };
 const CHORD_TMPL = {
-    maj7:[1,0,0,0,1,0,0,1,0,0,0,1],
-    min7:[1,0,0,1,0,0,0,1,0,0,1,0],
-    dom7:[1,0,0,0,1,0,0,1,0,0,1,0],
-    maj: [1,0,0,0,1,0,0,1,0,0,0,0],
-    min: [1,0,0,1,0,0,0,1,0,0,0,0],
-    dim: [1,0,0,1,0,0,1,0,0,0,0,0],
-    aug: [1,0,0,0,1,0,0,0,1,0,0,0],
-    sus: [1,0,0,0,0,1,0,1,0,0,0,0],
+    maj:    [1,0,0,0,1,0,0,1,0,0,0,0],
+    min:    [1,0,0,1,0,0,0,1,0,0,0,0],
+    dim:    [1,0,0,1,0,0,1,0,0,0,0,0],
+    aug:    [1,0,0,0,1,0,0,0,1,0,0,0],
+    maj7:   [1,0,0,0,1,0,0,1,0,0,0,1],
+    min7:   [1,0,0,1,0,0,0,1,0,0,1,0],
+    dom7:   [1,0,0,0,1,0,0,1,0,0,1,0],
+    dim7:   [1,0,0,1,0,0,1,0,0,1,0,0],
+    m7b5:   [1,0,0,1,0,0,1,0,0,0,1,0],
+    minmaj7:[1,0,0,1,0,0,0,1,0,0,0,1],
+    sus:    [1,0,0,0,0,1,0,1,0,0,0,0],
 };
 const KK_MAJ=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
 const KK_MIN=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
+const MAJ_SCALE=[0,2,4,5,7,9,11];
+const MIN_SCALE=[0,2,3,5,7,8,10];
+const MAJ_QUAL=['maj','min','min','maj','maj','min','dim'];
+const MIN_QUAL=['min','dim','maj','min','min','maj','maj'];
+// Chord suffixes for display
+const CHORD_SFX={'maj':'','min':'m','dim':'dim','aug':'aug',
+    'maj7':'maj7','min7':'m7','dom7':'7','dim7':'dim7','m7b5':'m7b5','minmaj7':'mM7'};
 const NOTES =['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 
 // ── Audio ────────────────────────────────────────────────────────
@@ -183,8 +196,14 @@ const bassSum = new Float32Array(12);  // running sum — bass register only (55
 const bassBuf = Array.from({length:HARM_WIN},()=>new Float32Array(12));
 
 let currentChord={hue:HUE_WARM,sat:0.6,val:0.5,label:''};
-const voteBuffer=[];   // last N chord detections for majority vote
-const VOTE_N=6;        // vote window (~0.1s at 60fps)
+const voteBuffer=[];
+const VOTE_N=24;  // ~0.4s at 60fps
+// Key detection state
+let detectedKey=0, detectedMode='maj';
+let diatonicSet=[];       // [{root, type}] — allowed chords
+const keyChroma=new Float32Array(12);  // long-term chroma accumulator
+let keyFrames=0;
+let keyLocked=false;      // true once we have enough data to lock the key
 const V={skyH:HUE_WARM,skyS:0.55,skyV:0.45,orbH:HUE_WARM,orbS:0.6,orbV:0.45,orbR:0,glow:0.3};
 let ribbon=[], lastRibMs=0, animPhase=0;
 let cv, cx2, W, H;
@@ -224,6 +243,59 @@ function getPitch(buf,sr){
     return bv<0.22||bp<1?0:sr/bp;
 }
 
+// ── Key detection ────────────────────────────────────────────────
+function detectKey(ch){
+    const mc=ch.reduce((a,b)=>a+b,0)/12;
+    let best=-Infinity, bestKey=0, bestMode='maj';
+    for(let r=0;r<12;r++){
+        for(const [mode,profile] of [['maj',KK_MAJ],['min',KK_MIN]]){
+            const pv=Array.from({length:12},(_,i)=>profile[(i-r+12)%12]);
+            const mp=pv.reduce((a,b)=>a+b,0)/12;
+            let n=0,dc=0,dp=0;
+            for(let i=0;i<12;i++){const a=ch[i]-mc,b=pv[i]-mp;n+=a*b;dc+=a*a;dp+=b*b;}
+            const cor=n/Math.sqrt(dc*dp+1e-10);
+            if(cor>best){best=cor;bestKey=r;bestMode=mode;}
+        }
+    }
+    return {key:bestKey,mode:bestMode};
+}
+
+// ── Diatonic set builder ──────────────────────────────────────────
+// Builds the allowed chord vocabulary for a given key.
+// Includes: diatonic triads+7ths, secondary dominants, borrowed chords.
+// Triads + 7ths only — extensions can't be reliably detected in a full mix.
+function buildDiatonicSet(key,mode){
+    const scale=mode==='maj'?MAJ_SCALE:MIN_SCALE;
+    const quals=mode==='maj'?MAJ_QUAL:MIN_QUAL;
+    const seen=new Set(); const set=[];
+    const add=(root,type)=>{const k=root+'_'+type;if(!seen.has(k)){seen.add(k);set.push({root,type});}};
+    // Diatonic triads + 7ths
+    for(let i=0;i<scale.length;i++){
+        const root=(key+scale[i])%12,q=quals[i];
+        add(root,q);
+        if(q==='maj'){add(root,'maj7');}
+        if(q==='min'){add(root,'min7');add(root,'minmaj7');}
+        if(q==='dim'){add(root,'m7b5');add(root,'dim7');}
+        if(i===4){add(root,'dom7');}
+    }
+    // Secondary dominants — V7 of each diatonic chord (e.g. E7 in C major = V/vi)
+    for(let i=0;i<scale.length;i++){
+        const target=(key+scale[i])%12;
+        add((target+7)%12,'dom7');
+        add((target+7)%12,'maj');
+    }
+    // Borrowed chords from parallel key (bVII, bVI etc.)
+    const bScale=mode==='maj'?MIN_SCALE:MAJ_SCALE;
+    const bQuals=mode==='maj'?MIN_QUAL:MAJ_QUAL;
+    for(let i=0;i<6;i++){
+        const root=(key+bScale[i])%12,q=bQuals[i];
+        add(root,q);
+        if(q==='maj')add(root,'dom7');
+        if(q==='min')add(root,'min7');
+    }
+    return set;
+}
+
 // ── Tonal distance ───────────────────────────────────────────────
 function tonalDist(ch){
     const tot=ch.reduce((a,b)=>a+b,0)+1e-8;
@@ -240,58 +312,68 @@ function tonalDist(ch){
     return clamp((1-best)/2,0,1);
 }
 
-// ── Chord detection — global best matching ───────────────────────
-// Tests ALL 144 combinations (12 roots × 12 types) simultaneously.
-// No root-first assumption — avoids the root/fifth confusion entirely.
-// Then applies a vote buffer to smooth frame-to-frame flickering.
+// ── Chord detection ──────────────────────────────────────────────
+// Bass-anchored root + key-aware quality matching.
+// Triads + 7ths only — extensions (9ths+) can't be reliably
+// distinguished from overtone noise in a full mix.
+// Covers all standard chords: maj7, min7, dom7, m7b5, dim7, mM7,
+// plus secondary dominants and borrowed chords for the detected key.
 function detectChord(){
     const n = Math.min(harmFilled, HARM_WIN);
     if(n < 10) return;
 
-    // Normalised accumulated chroma
-    const ch = new Float32Array(12);
-    let tot=0;
+    // Full chroma
+    const ch = new Float32Array(12); let tot=0;
     for(let i=0;i<12;i++){ ch[i]=harmSum[i]/n; tot+=ch[i]; }
     if(tot<1e-6) return;
     for(let i=0;i<12;i++) ch[i]/=tot;
-    if(Math.max(...ch)<0.09) return;
+    if(Math.max(...ch)<0.08) return;
 
-    // Global best: try every root × every quality
-    const order=['maj7','min7','dom7','maj','min','dim','aug','sus'];
+    // Bass chroma — root detection from 82-200Hz register
+    const bs = new Float32Array(12); let btot=0;
+    for(let i=0;i<12;i++){ bs[i]=bassSum[i]/n; btot+=bs[i]; }
+    for(let i=0;i<12;i++) bs[i]/=(btot||1e-8);
+    let bassRoot=0, bassConf=0;
+    for(let i=0;i<12;i++) if(bs[i]>bassConf){bassConf=bs[i];bassRoot=i;}
+
+    // Search space
+    const searchSet = keyLocked ? diatonicSet : (() => {
+        const s=[];
+        for(let r=0;r<12;r++)
+            for(const t of ['maj','min','dim','aug','maj7','min7','dom7','dim7','m7b5','minmaj7'])
+                s.push({root:r,type:t});
+        return s;
+    })();
+
     let bestScore=-Infinity, bestRoot=0, bestType='maj';
-    for(let r=0;r<12;r++){
-        for(const type of order){
-            const tmpl=CHORD_TMPL[type];
-            let score=0;
-            for(let i=0;i<12;i++)
-                score += ch[(i+r)%12] * (tmpl[i] ? 2.5 : -0.8);
-            if(score>bestScore){ bestScore=score; bestRoot=r; bestType=type; }
-        }
+    for(const {root:r, type} of searchSet){
+        const tmpl=CHORD_TMPL[type]; if(!tmpl) continue;
+        let score=0;
+        for(let i=0;i<12;i++) score+=ch[(i+r)%12]*(tmpl[i]?2.5:-0.8);
+        if(r===bassRoot) score+=bassConf*8.0;  // bass note anchors root
+        if(score>bestScore){ bestScore=score; bestRoot=r; bestType=type; }
     }
 
-    // Vote buffer — majority over last VOTE_N detections
-    const label = NOTES[bestRoot] + CHORD_MAP[bestType].sfx;
+    // Vote buffer — require 55% majority to change displayed chord
+    const label=NOTES[bestRoot]+(CHORD_SFX[bestType]||'');
     voteBuffer.push(label);
-    if(voteBuffer.length > VOTE_N) voteBuffer.shift();
-
-    // Count votes
+    if(voteBuffer.length>VOTE_N) voteBuffer.shift();
     const votes={};
     for(const v of voteBuffer) votes[v]=(votes[v]||0)+1;
     let winner=label, winCount=0;
     for(const [k,v] of Object.entries(votes)) if(v>winCount){winner=k;winCount=v;}
+    if(votes[winner]/voteBuffer.length < 0.55) return;
 
-    // Find the chord map entry for the winner
-    // winner format: e.g. "Am7", "Cmaj7", "G7", "F"
+    // Map winner to visual
     for(let r=0;r<12;r++){
-        for(const type of order){
-            const candidate = NOTES[r] + CHORD_MAP[type].sfx;
-            if(candidate===winner){
+        for(const type of Object.keys(CHORD_MAP)){
+            if(NOTES[r]+(CHORD_SFX[type]||CHORD_MAP[type].sfx||'')===winner){
                 const cm=CHORD_MAP[type];
                 return {hue:cm.h, sat:cm.s, val:cm.v, label:winner};
             }
         }
     }
-    const cm=CHORD_MAP[bestType];
+    const cm=CHORD_MAP[bestType]||CHORD_MAP['maj'];
     return {hue:cm.h, sat:cm.s, val:cm.v, label:winner};
 }
 
@@ -329,28 +411,55 @@ function readFeatures(){
         const cBHz   = sr / analyserChord.fftSize;       // Hz per bin
         const ch     = new Float32Array(12);
 
-        // Extract chroma from 82–500Hz only.
-        // 82Hz = E2 (lowest guitar string) — below this is kick drum, not harmony.
-        // 500Hz = above this, melody starts to dominate.
+        // Full chroma: 82–500Hz (chord tones)
+        // Bass chroma: 82–200Hz (root detection — below melody range)
+        const chBass = new Float32Array(12);
         for(let i=1;i<cfSize;i++){
             const hz=i*cBHz;
             if(hz<82||hz>500) continue;
-            if(cFreq[i]<-72)  continue;  // ignore very weak bins
+            if(cFreq[i]<-72)  continue;
             const lin=Math.pow(10,cFreq[i]/20);
             const pc=((Math.round(69+12*Math.log2(hz/440))%12)+12)%12;
             ch[pc]+=lin;
+            if(hz<=200) chBass[pc]+=lin;  // bass register only
         }
 
         const chTot=Array.from(ch).reduce((a,b)=>a+b,0)+1e-8;
         if(chTot>1e-6){
             const chNorm=ch.map(x=>x/chTot);
+            const bTot=Array.from(chBass).reduce((a,b)=>a+b,0)+1e-8;
+            const bNorm=chBass.map(x=>x/bTot);
+
+            // Update harmonic ring buffer
             const old=harmBuf[harmIdx];
             for(let i=0;i<12;i++){
                 harmSum[i]+=chNorm[i]-old[i];
                 harmBuf[harmIdx][i]=chNorm[i];
             }
+
+            // Update bass ring buffer
+            const oldB=bassBuf[harmIdx];
+            for(let i=0;i<12;i++){
+                bassSum[i]+=bNorm[i]-oldB[i];
+                bassBuf[harmIdx][i]=bNorm[i];
+            }
             harmIdx=(harmIdx+1)%HARM_WIN;
             harmFilled=Math.min(harmFilled+1,HARM_WIN);
+
+            // Long-term chroma for key detection (accumulate for ~5s then lock)
+            if(!keyLocked){
+                for(let i=0;i<12;i++) keyChroma[i]+=chNorm[i];
+                keyFrames++;
+                if(keyFrames>=300){  // ~5s at 60fps
+                    const tot2=Array.from(keyChroma).reduce((a,b)=>a+b,0)+1e-8;
+                    const kn=keyChroma.map(x=>x/tot2);
+                    const {key,mode}=detectKey(Array.from(kn));
+                    detectedKey=key; detectedMode=mode;
+                    diatonicSet=buildDiatonicSet(key,mode);
+                    keyLocked=true;
+                    console.log(`Key locked: ${['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][key]} ${mode}`);
+                }
+            }
         }
     }
 
@@ -472,6 +581,7 @@ function resetHarmBuf(){
     for(let i=0;i<HARM_WIN;i++){ harmBuf[i].fill(0); bassBuf[i].fill(0); }
     harmSum.fill(0); bassSum.fill(0); harmIdx=0; harmFilled=0;
     voteBuffer.length=0;
+    keyChroma.fill(0); keyFrames=0; keyLocked=false; diatonicSet=[];
     currentChord={hue:HUE_WARM,sat:0.6,val:0.5,label:''};
 }
 
@@ -812,7 +922,7 @@ function draw(ts){
                        .sort((a,b)=>b.v-a.v).slice(0,3)
                        .map(x=>NOTES[x.i]+':'+x.v.toFixed(2)).join(' ');
         document.getElementById('debug').textContent=
-            `rms:${S.rms.toFixed(4)} chord:${currentChord.label||'—'} buf:${harmFilled}/${HARM_WIN} top:[${dbCh}]`;
+            `rms:${S.rms.toFixed(4)} chord:${currentChord.label||'—'} key:${keyLocked?(['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][detectedKey]+detectedMode):'?'} buf:${harmFilled}/${HARM_WIN} top:[${dbCh}]`;
     }
 }
 
