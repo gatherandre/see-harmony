@@ -238,12 +238,10 @@ function tonalDist(ch){
     return clamp((1-best)/2,0,1);
 }
 
-// ── Chord detection — mirrors validated Python implementation ─────
-// Python analysis confirmed: lowpass chroma + argmax root works.
-// JS mirrors that exactly.
+// ── Chord detection ──────────────────────────────────────────────
 function detectChord(){
     const n = Math.min(harmFilled, HARM_WIN);
-    if(n < 20) return;  // need at least 20 frames (~0.3s)
+    if(n < 20) return;
 
     // Normalised accumulated chroma
     const ch = new Float32Array(12);
@@ -252,15 +250,36 @@ function detectChord(){
     if(tot < 1e-6) return;
     for(let i=0;i<12;i++) ch[i]/=tot;
 
-    // Confidence — need a clear peak
     const maxC = Math.max(...ch);
     if(maxC < 0.10) return;
 
-    // Root = strongest pitch class (exactly as Python argmax)
+    // ── Root finding with fifth-check ─────────────────────────────
+    // Problem: on guitar, the fifth often rings louder than the root
+    // (e.g. open E strings dominate Am, making algorithm pick Em).
+    // Fix: if the strongest note X could be the fifth of some chord
+    // whose root (X - 7 semitones) is also meaningfully present,
+    // prefer the lower root candidate.
     let root=0, rootVal=0;
     for(let i=0;i<12;i++) if(ch[i]>rootVal){ rootVal=ch[i]; root=i; }
 
-    // Quality = best template match with root fixed (exactly as Python)
+    // Check: is there a note 7 semitones below (the fourth interval)
+    // that could be the real root? If it's at least 55% as strong, prefer it.
+    const fifthRoot = (root - 7 + 12) % 12;  // if root is fifth, this is the real root
+    if(ch[fifthRoot] >= rootVal * 0.55){
+        // Also verify: does the chord built on fifthRoot fit the chroma
+        // better than the chord built on root?
+        let scoreOnFifthRoot = 0, scoreOnRoot = 0;
+        const majTmpl = CHORD_TMPL['maj'];
+        const minTmpl = CHORD_TMPL['min'];
+        for(let i=0;i<12;i++){
+            const bestTmpl = ch[(i+fifthRoot)%12] > ch[(i+root)%12] ? minTmpl : majTmpl;
+            scoreOnFifthRoot += ch[(i+fifthRoot)%12] * (minTmpl[i] ? 1.5 : -0.3);
+            scoreOnRoot      += ch[(i+root)%12]      * (majTmpl[i] ? 1.5 : -0.3);
+        }
+        if(scoreOnFifthRoot > scoreOnRoot * 0.85) root = fifthRoot;
+    }
+
+    // ── Quality match with root fixed ─────────────────────────────
     const order=['maj7','min7','dom7','maj','min','dim','aug','sus'];
     let bestType='maj', bestScore=-Infinity;
     for(const type of order){
