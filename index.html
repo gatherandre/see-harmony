@@ -155,6 +155,8 @@ const NOTES =['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 // ── Audio ────────────────────────────────────────────────────────
 let audioCtx, analyserNode, silentGain, pitchBuf;
 let analyserL=null, analyserR=null;  // stereo channel analysers
+let analyserChord=null;              // low-pass filtered analyser for chord detection only
+let lowpassFilter=null;              // BiquadFilter: cuts melody, passes bass+harmony
 let isStereo=false;
 // Stereo chroma accumulators (simplified — just pitch class energy per side)
 const stereoL=new Float32Array(12), stereoR=new Float32Array(12);
@@ -322,49 +324,57 @@ function readFeatures(){
     }
     if(ss>0) S.centroid=ema(S.centroid,clamp(ws/ss,400,5000),ALPHA);
 
-    // Two separate chroma extractions:
-    // 1. Full chroma (55–4200Hz, bass-biased) — for chord quality detection
-    // 2. Bass chroma (55–350Hz only) — for root detection
-    const ch    = new Float32Array(12);
-    const chBas = new Float32Array(12);
+    // Chord chroma from LOW-PASS FILTERED analyser (melody already removed by hardware filter)
+    // This signal only contains frequencies 55–400Hz: bass notes and lower chord tones.
+    // No melody can survive a 400Hz lowpass, so what we see here IS the harmony.
+    if(analyserChord){
+        const cfSize  = analyserChord.frequencyBinCount;
+        const cFreq   = new Float32Array(cfSize);
+        analyserChord.getFloatFrequencyData(cFreq);
+        const cBHz    = sr / analyserChord.fftSize;
+        const ch      = new Float32Array(12);
 
+        for(let i=1;i<cfSize;i++){
+            const hz=i*cBHz;
+            if(hz<55||hz>420) continue;
+            if(cFreq[i]<-80)  continue;
+            const lin=Math.pow(10,cFreq[i]/20);
+            const pc=((Math.round(69+12*Math.log2(hz/440))%12)+12)%12;
+            ch[pc]+=lin;
+        }
+
+        const chTot=Array.from(ch).reduce((a,b)=>a+b,0)+1e-8;
+        const chNorm=ch.map(x=>x/chTot);
+
+        // Push to harmonic ring buffer
+        const old=harmBuf[harmIdx];
+        for(let i=0;i<12;i++){
+            harmSum[i]+=chNorm[i]-old[i];
+            harmBuf[harmIdx][i]=chNorm[i];
+        }
+
+        // Bass chroma is the same signal — it's ALL bass after lowpass
+        const oldB=bassBuf[harmIdx];
+        for(let i=0;i<12;i++){
+            bassSum[i]+=chNorm[i]-oldB[i];
+            bassBuf[harmIdx][i]=chNorm[i];
+        }
+
+        harmIdx=(harmIdx+1)%HARM_WIN;
+        harmFilled=Math.min(harmFilled+1,HARM_WIN*2);
+    }
+
+    // Instant chroma from main analyser (full spectrum) — used for sky/tension only
+    const ch2=new Float32Array(12);
     for(let i=1;i<binCount;i++){
-        const hz=i*bHz;
-        if(hz<55||hz>4200) continue;
-        if(freqData[i]<-72) continue;
+        const hz=i*bHz; if(hz<55||hz>4200) continue;
+        if(freqData[i]<-75) continue;
         const lin=Math.pow(10,freqData[i]/20);
-        const pc=((Math.round(69+12*Math.log2(hz/440))%12)+12)%12;
-
-        // Full chroma: bass-biased but includes everything
-        if(hz<350)       ch[pc]+=lin*6.0;   // strong bass bias
-        else if(hz<700)  ch[pc]+=lin*3.0;
-        else if(hz<1400) ch[pc]+=lin*1.5;
-        else             ch[pc]+=lin*0.5;   // melody notes heavily downweighted
-
-        // Bass-only chroma: 55–350Hz (guitar low strings, piano bass)
-        if(hz>=55&&hz<=350) chBas[pc]+=lin;
+        ch2[((Math.round(69+12*Math.log2(hz/440))%12)+12)%12]+=lin;
     }
-
-    // Normalise full chroma and push to ring buffer
-    const chTot=Array.from(ch).reduce((a,b)=>a+b,0)+1e-8;
-    const chNorm=ch.map(x=>x/chTot);
-    const old=harmBuf[harmIdx];
-    for(let i=0;i<12;i++){
-        harmSum[i]+=chNorm[i]-old[i];
-        harmBuf[harmIdx][i]=chNorm[i];
-    }
-
-    // Normalise bass chroma and push to bass ring buffer
-    const bTot=Array.from(chBas).reduce((a,b)=>a+b,0)+1e-8;
-    const bNorm=chBas.map(x=>x/bTot);
-    const oldB=bassBuf[harmIdx];
-    for(let i=0;i<12;i++){
-        bassSum[i]+=bNorm[i]-oldB[i];
-        bassBuf[harmIdx][i]=bNorm[i];
-    }
-
-    harmIdx=(harmIdx+1)%HARM_WIN;
-    harmFilled=Math.min(harmFilled+1,HARM_WIN*2);
+    const c2t=Array.from(ch2).reduce((a,b)=>a+b,0)+1e-8;
+    for(let i=0;i<12;i++) S.chroma[i]=ema(S.chroma[i],ch2[i]/c2t,ALPHA*0.5);
+    S.tension=ema(S.tension,tonalDist(Array.from(S.chroma)),ALPHA);
 
     // Instant chroma for tonal distance (can be noisy, that's fine)
     for(let i=0;i<12;i++) S.chroma[i]=ema(S.chroma[i],chNorm[i],ALPHA*0.5);
@@ -408,6 +418,22 @@ async function init(){
         silentGain.gain.value=0;
         analyserNode.connect(silentGain);
         silentGain.connect(audioCtx.destination);
+
+        // Low-pass filter for chord detection — cuts everything above 400Hz.
+        // Melody lives 400Hz–4kHz. Chord roots/tones live 55–400Hz.
+        // This means the melody literally cannot affect chord detection.
+        lowpassFilter=audioCtx.createBiquadFilter();
+        lowpassFilter.type='lowpass';
+        lowpassFilter.frequency.value=400;
+        lowpassFilter.Q.value=1.0;
+
+        analyserChord=audioCtx.createAnalyser();
+        analyserChord.fftSize=4096;
+        analyserChord.smoothingTimeConstant=0.9;
+
+        // Route: source → lowpassFilter → analyserChord → silentGain (silent)
+        lowpassFilter.connect(analyserChord);
+        analyserChord.connect(silentGain);
         await startMic();
         document.getElementById('overlay').classList.add('hidden');
         document.getElementById('ui').style.opacity='1';
@@ -431,6 +457,7 @@ async function startMic(){
         audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false},video:false});
     micSource=audioCtx.createMediaStreamSource(micStream);
     micSource.connect(analyserNode);
+    micSource.connect(lowpassFilter);  // also feed chord analyser
     inputMode='mic'; recording=false;
     resetHarmBuf();
     document.getElementById('rec-btn').style.display='flex';
@@ -514,11 +541,13 @@ function playFile(){
         fileSource.connect(splitter);
         splitter.connect(analyserL,0);
         splitter.connect(analyserR,1);
-        fileSource.connect(analyserNode); // main analyser still gets full mix
+        fileSource.connect(analyserNode);     // main analyser: full mix
+        fileSource.connect(lowpassFilter);   // chord analyser: bass only
     } else {
         if(analyserL){try{analyserL.disconnect();}catch(_){} analyserL=null;}
         if(analyserR){try{analyserR.disconnect();}catch(_){} analyserR=null;}
         fileSource.connect(analyserNode);
+        fileSource.connect(lowpassFilter);  // chord analyser
     }
     fileSource.start(0,clamp(fileOffset,0,fileDuration-0.01));
     fileStartAt=audioCtx.currentTime-fileOffset;
