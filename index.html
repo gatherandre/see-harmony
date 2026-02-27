@@ -368,37 +368,107 @@ function setStatus(t,s){
     document.getElementById('status-sub').textContent=s||'';
 }
 
+// ── chord detection ─────────────────────────────────────────────
+// Returns {type, root, hue, sat, val, label} for the current chroma.
+// Matches chroma vector against all chord templates × 12 roots.
+// Priority order: 7th chords before triads (more specific wins).
+function detectChord(chroma) {
+    const tot = chroma.reduce((a,b)=>a+b,0) + 1e-8;
+    const c   = chroma.map(x => x/tot);
+
+    const order = ['maj7','min7','dom7','maj','min','dim','aug','sus'];
+    let best = { score:-Infinity, type:'none', root:0 };
+
+    for (const type of order) {
+        const tmpl = CHORD_TEMPLATES[type];
+        for (let root = 0; root < 12; root++) {
+            let score = 0;
+            for (let i = 0; i < 12; i++) {
+                score += c[(i+root)%12] * tmpl[i];
+            }
+            // penalise notes that shouldn't be present
+            for (let i = 0; i < 12; i++) {
+                if (tmpl[i] === 0) score -= c[(i+root)%12] * 0.5;
+            }
+            if (score > best.score) {
+                best = { score, type, root };
+            }
+        }
+    }
+
+    // Confidence threshold — below this, no clear chord
+    if (best.score < 0.18) {
+        const [h,s,v,lbl] = CHORD_MAP.none;
+        return { type:'none', root:0, hue:h, sat:s, val:v, label:lbl };
+    }
+
+    const [h,s,v,lbl] = CHORD_MAP[best.type];
+    const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+    return {
+        type:  best.type,
+        root:  best.root,
+        hue:   h,
+        sat:   s,
+        val:   v,
+        label: NOTE_NAMES[best.root] + lbl,
+    };
+}
+
+// current chord — updated each frame, used by renderer
+let currentChord = { type:'none', root:0, hue:HUE_WARM, sat:0.45, val:0.35, label:'' };
+
 // ── visual mapping ──────────────────────────────────────────────
 function processVisuals(){
     readAnalyser();
 
-    const rms=S.rms;
-    const hasSignal = rms > 0.005;
+    const rms       = S.rms;
+    const hasSignal = rms > 0.004;
+    const dim       = Math.min(W, H);
+    animPhase      += 0.0004;
 
-    // Always show ambient animation — scale by signal presence
-    const semi   = Math.log2(Math.max(S.pitch,20)/440)*12;
-    const valAud = clamp((semi-SEMI_MIN)/(SEMI_MAX-SEMI_MIN),0.1,1.0);
-    const satAud = clamp((S.centroid-400)/(4600),0.3,1.0);
-    const hueAud = lerp(HUE_WARM,HUE_COOL,S.tension);
-    const dim    = Math.min(W,H);
+    // ── Physical layer (sky) ──────────────────────────────────────
+    // Continuous, ratio-preserving, psychophysically grounded.
+    // Controls background field only — no harmonic interpretation.
+    const semi    = Math.log2(Math.max(S.pitch, 20) / 440) * 12;
+    const skyVal  = clamp((semi - SEMI_MIN) / (SEMI_MAX - SEMI_MIN), 0.12, 1.0);
+    // Saturation: full range 0→1, no artificial floor
+    const skySat  = clamp((S.centroid - 400) / 4600, 0.0, 1.0);
+    // Hue: warm→cool tracks tonal distance (physical layer)
+    const skyHue  = lerp(HUE_WARM, HUE_COOL, S.tension);
 
-    // Ambient base — always alive, shifts slowly
-    animPhase+=0.0004;
-    const ambHue = (HUE_WARM + Math.sin(animPhase)*15+360)%360;
-    const ambVal = 0.28 + Math.sin(animPhase*0.7)*0.06;
+    // ── Semantic layer (orb) ─────────────────────────────────────
+    // Categorical, emotionally grounded — chord character map.
+    // Controls orb colour only — vivid, specific, full-spectrum.
+    if (hasSignal) {
+        currentChord = detectChord(S.chroma);
+    }
+    const orbHue = currentChord.hue;
+    const orbSat = currentChord.sat;
+    const orbVal = currentChord.val;
 
-    if(hasSignal){
-        V.hue  = ema(V.hue,  hueAud,  0.08);
-        V.sat  = ema(V.sat,  satAud,  0.08);
-        V.val  = ema(V.val,  valAud,  0.08);
-        V.orbR = ema(V.orbR, dim*0.07+S.onset*dim*0.08, 0.3);
-        V.glow = ema(V.glow, clamp(rms*6,0,1),           0.2);
+    // Ambient drift when silent
+    const ambHue = (HUE_WARM + Math.sin(animPhase) * 18 + 360) % 360;
+
+    if (hasSignal) {
+        // Sky: physical layer — smooth, continuous
+        V.skyHue = ema(V.skyHue || skyHue, skyHue, 0.10);
+        V.skySat = ema(V.skySat || skySat, skySat, 0.10);
+        V.skyVal = ema(V.skyVal || skyVal, skyVal, 0.10);
+        // Orb: semantic layer — slightly slower for visual stability
+        V.hue    = ema(V.hue,  orbHue, 0.07);
+        V.sat    = ema(V.sat,  orbSat, 0.07);
+        V.val    = ema(V.val,  orbVal, 0.07);
+        V.orbR   = ema(V.orbR, dim * 0.08 + S.onset * dim * 0.09, 0.3);
+        V.glow   = ema(V.glow, clamp(rms * 7, 0, 1), 0.22);
     } else {
-        V.hue  = ema(V.hue,  ambHue, 0.004);
-        V.sat  = ema(V.sat,  0.38,   0.004);
-        V.val  = ema(V.val,  ambVal, 0.004);
-        V.orbR = ema(V.orbR, dim*0.065, 0.05);
-        V.glow = ema(V.glow, 0.08,   0.05);
+        V.skyHue = ema(V.skyHue || ambHue, ambHue, 0.003);
+        V.skySat = ema(V.skySat || 0.35, 0.35, 0.003);
+        V.skyVal = ema(V.skyVal || 0.22, 0.22, 0.003);
+        V.hue    = ema(V.hue,  ambHue, 0.003);
+        V.sat    = ema(V.sat,  0.35,   0.003);
+        V.val    = ema(V.val,  0.22,   0.003);
+        V.orbR   = ema(V.orbR, dim * 0.065, 0.04);
+        V.glow   = ema(V.glow, 0.06,   0.04);
     }
 }
 
@@ -406,54 +476,84 @@ function processVisuals(){
 function draw(ts){
     if(!audioCtx) return;
     processVisuals();
-    const {hue:h,sat:s,val:v,orbR:oR,glow:gl}=V;
-    const cx=W/2, cy=(H-RIBBON_H)/2;
+    // Physical layer colours (sky)
+    const sh = V.skyHue !== undefined ? V.skyHue : HUE_WARM;
+    const ss = V.skySat !== undefined ? V.skySat : 0.35;
+    const sv = V.skyVal !== undefined ? V.skyVal : 0.22;
+    // Semantic layer colours (orb)
+    const {hue:h, sat:s, val:v, orbR:oR, glow:gl} = V;
+    const cx = W/2, cy = (H - RIBBON_H) / 2;
 
-    cx2.fillStyle='#050508'; cx2.fillRect(0,0,W,H);
+    cx2.fillStyle = '#050508'; cx2.fillRect(0,0,W,H);
 
-    // background sky
-    const R=Math.min(W,H)*0.9;
-    const g1=cx2.createRadialGradient(cx,cy,0,cx,cy,R);
-    g1.addColorStop(0,   hsvCss(h,s,v,1.0));
-    g1.addColorStop(0.35,hsvCss(h,s*0.75,v*0.55,0.75));
-    g1.addColorStop(0.65,hsvCss(h,s*0.45,v*0.22,0.45));
-    g1.addColorStop(0.88,hsvCss(h,s*0.2,v*0.07,0.2));
-    g1.addColorStop(1,   'rgba(5,5,8,0)');
-    cx2.fillStyle=g1; cx2.fillRect(0,0,W,H);
+    // ── Background sky — physical layer ──────────────────────────
+    const R = Math.min(W,H) * 0.9;
+    const g1 = cx2.createRadialGradient(cx, cy, 0, cx, cy, R);
+    g1.addColorStop(0,    hsvCss(sh, ss, sv,        0.95));
+    g1.addColorStop(0.30, hsvCss(sh, ss, sv * 0.7,  0.80));
+    g1.addColorStop(0.60, hsvCss(sh, ss, sv * 0.4,  0.50));
+    g1.addColorStop(0.85, hsvCss(sh, ss, sv * 0.15, 0.22));
+    g1.addColorStop(1,    'rgba(5,5,8,0)');
+    cx2.fillStyle = g1; cx2.fillRect(0,0,W,H);
 
-    // secondary drift
-    const dr=ts*0.00022;
-    const ox=cx+Math.sin(dr)*W*0.06, oy=cy+Math.cos(dr*0.73)*H*0.06;
-    const g2=cx2.createRadialGradient(ox,oy,0,ox,oy,R*0.55);
-    g2.addColorStop(0,  hsvCss((h+38)%360,s*0.5,v*0.4,0.4));
+    // Secondary drift — complement hue for depth
+    const dr = ts * 0.00022;
+    const ox = cx + Math.sin(dr) * W * 0.06;
+    const oy = cy + Math.cos(dr * 0.73) * H * 0.06;
+    const g2 = cx2.createRadialGradient(ox, oy, 0, ox, oy, R * 0.5);
+    g2.addColorStop(0,  hsvCss((sh + 40) % 360, ss * 0.6, sv * 0.5, 0.35));
     g2.addColorStop(1,  'rgba(5,5,8,0)');
-    cx2.fillStyle=g2; cx2.fillRect(0,0,W,H);
+    cx2.fillStyle = g2; cx2.fillRect(0,0,W,H);
 
-    // halos
-    const gs=0.35+gl*0.65;
-    for(let l=0;l<4;l++){
-        const lr=(4+l*3.2)*oR, la=(0.12-l*0.025)*gs;
-        const og=cx2.createRadialGradient(cx,cy,oR*0.25,cx,cy,lr);
-        og.addColorStop(0,hsvCss(h,s,v,la*2.8)); og.addColorStop(1,hsvCss(h,s,v,0));
-        cx2.fillStyle=og; cx2.beginPath(); cx2.arc(cx,cy,lr,0,Math.PI*2); cx2.fill();
+    // ── Orb — semantic layer, vivid chord colours ─────────────────
+    const gs = 0.38 + gl * 0.62;
+
+    // Halo glow — chord colour bleeds outward
+    for (let l = 0; l < 4; l++) {
+        const lr = (4.2 + l * 3.5) * oR;
+        const la = (0.14 - l * 0.028) * gs;
+        const og = cx2.createRadialGradient(cx, cy, oR * 0.2, cx, cy, lr);
+        og.addColorStop(0, hsvCss(h, s, v, la * 3.0));
+        og.addColorStop(1, hsvCss(h, s, v, 0));
+        cx2.fillStyle = og;
+        cx2.beginPath(); cx2.arc(cx, cy, lr, 0, Math.PI*2); cx2.fill();
     }
 
-    // orb
-    const ob=cx2.createRadialGradient(cx-oR*0.32,cy-oR*0.32,oR*0.03,cx,cy,oR);
-    ob.addColorStop(0,   hsvCss(h,s*0.2,Math.min(v*2.2,1),0.98));
-    ob.addColorStop(0.5, hsvCss(h,s,v,0.92));
-    ob.addColorStop(1,   hsvCss(h,s*1.1,v*0.45,0.35));
-    cx2.fillStyle=ob; cx2.beginPath(); cx2.arc(cx,cy,oR,0,Math.PI*2); cx2.fill();
+    // Orb body — full chord colour, no saturation crushing
+    const ob = cx2.createRadialGradient(cx - oR*0.32, cy - oR*0.32, oR*0.03, cx, cy, oR);
+    ob.addColorStop(0,    hsvCss(h, s * 0.4, Math.min(v * 1.6, 1.0), 0.98));
+    ob.addColorStop(0.45, hsvCss(h, s,       v,                       0.95));
+    ob.addColorStop(1,    hsvCss(h, s,       v * 0.55,                0.40));
+    cx2.fillStyle = ob;
+    cx2.beginPath(); cx2.arc(cx, cy, oR, 0, Math.PI*2); cx2.fill();
 
-    // specular
-    const hlR=oR*0.42;
-    const hl=cx2.createRadialGradient(cx-oR*0.3,cy-oR*0.3,0,cx-oR*0.3,cy-oR*0.3,hlR);
-    hl.addColorStop(0,`rgba(255,255,255,${0.2*gs})`); hl.addColorStop(1,'rgba(255,255,255,0)');
-    cx2.fillStyle=hl; cx2.beginPath(); cx2.arc(cx-oR*0.3,cy-oR*0.3,hlR,0,Math.PI*2); cx2.fill();
+    // Specular highlight
+    const hlR = oR * 0.42;
+    const hl = cx2.createRadialGradient(cx-oR*0.3, cy-oR*0.3, 0, cx-oR*0.3, cy-oR*0.3, hlR);
+    hl.addColorStop(0, `rgba(255,255,255,${0.22 * gs})`);
+    hl.addColorStop(1, 'rgba(255,255,255,0)');
+    cx2.fillStyle = hl;
+    cx2.beginPath(); cx2.arc(cx-oR*0.3, cy-oR*0.3, hlR, 0, Math.PI*2); cx2.fill();
+
+    // Chord label on orb
+    if (currentChord.label && gl > 0.05) {
+        const fontSize = Math.max(12, oR * 0.30) | 0;
+        cx2.font = `300 ${fontSize}px 'JetBrains Mono', monospace`;
+        cx2.textAlign = 'center';
+        cx2.textBaseline = 'middle';
+        cx2.fillStyle = `rgba(255,255,255,${Math.min(gl * 2.5, 0.80)})`;
+        cx2.fillText(currentChord.label, cx, cy);
+    }
 
     // ribbon
-    if(mode==='learn'&&ts-lastRibMs>RIBBON_MS){
-        ribbon.push({h,s,v}); if(ribbon.length>RIBBON_N) ribbon.shift();
+    if(mode==='learn' && ts-lastRibMs>RIBBON_MS){
+        // Store both layers: sky (physical) and orb (semantic)
+        ribbon.push({
+            h, s, v,           // semantic — chord colour
+            sh, ss, sv,        // physical — acoustic colour
+            label: currentChord.label,
+        });
+        if(ribbon.length>RIBBON_N) ribbon.shift();
         lastRibMs=ts;
     }
     const ry=H-RIBBON_H;
@@ -462,17 +562,32 @@ function draw(ts){
     if(ribbon.length>1){
         const sw=W/RIBBON_N, sx=W-ribbon.length*sw;
         for(let i=0;i<ribbon.length;i++){
-            const e=ribbon[i],x=sx+i*sw,age=(ribbon.length-i)/ribbon.length,al=0.12+(1-age)*0.82;
+            const e=ribbon[i], x=sx+i*sw;
+            const age=(ribbon.length-i)/ribbon.length;
+            const al=0.15+(1-age)*0.82;
+            // Use semantic (chord) colour for ribbon body
             const cg=cx2.createLinearGradient(0,ry,0,H);
-            cg.addColorStop(0,   hsvCss(e.h,e.s,e.v*0.25,0));
-            cg.addColorStop(0.18,hsvCss(e.h,e.s,e.v,al));
-            cg.addColorStop(0.5, hsvCss(e.h,e.s,e.v,al));
-            cg.addColorStop(0.85,hsvCss(e.h,e.s,e.v*0.55,al*0.65));
-            cg.addColorStop(1,   hsvCss(e.h,e.s,e.v*0.1,0));
-            cx2.fillStyle=cg; cx2.fillRect(x,ry,sw+0.8,RIBBON_H);
+            cg.addColorStop(0,    hsvCss(e.h, e.s, e.v*0.2,  0));
+            cg.addColorStop(0.15, hsvCss(e.h, e.s, e.v,      al));
+            cg.addColorStop(0.5,  hsvCss(e.h, e.s, e.v,      al));
+            cg.addColorStop(0.88, hsvCss(e.h, e.s, e.v*0.5,  al*0.65));
+            cg.addColorStop(1,    hsvCss(e.h, e.s, e.v*0.08, 0));
+            cx2.fillStyle=cg; cx2.fillRect(x, ry, sw+0.8, RIBBON_H);
+
+            // Chord label in ribbon — every ~10 blocks when label changes
+            if (e.label && i>0 && ribbon[i-1].label !== e.label && (1-age)>0.1) {
+                cx2.save();
+                cx2.font = '300 8px JetBrains Mono, monospace';
+                cx2.textAlign = 'center';
+                cx2.textBaseline = 'middle';
+                cx2.fillStyle = `rgba(255,255,255,${Math.min(al*0.9,0.7)})`;
+                cx2.fillText(e.label, x + sw/2, ry + RIBBON_H/2);
+                cx2.restore();
+            }
         }
-        cx2.fillStyle='rgba(255,255,255,0.38)';
-        cx2.fillRect(Math.floor(sx+ribbon.length*sw)-1,ry+7,2,RIBBON_H-14);
+        // Playhead cursor
+        cx2.fillStyle='rgba(255,255,255,0.45)';
+        cx2.fillRect(Math.floor(sx+ribbon.length*sw)-1, ry+5, 2, RIBBON_H-10);
     }
 
     // progress
