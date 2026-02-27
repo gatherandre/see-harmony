@@ -237,66 +237,41 @@ function tonalDist(ch){
     return clamp((1-best)/2,0,1);
 }
 
-// ── Bass-first chord detection ───────────────────────────────────
-// Strategy:
-//   1. Find the dominant bass note from the LOW register (55–350Hz)
-//      This is the actual root the guitarist is playing in the bass.
-//   2. With root locked, find which chord template best fits the full chroma.
-// This solves Amaj7→Cmaj7 confusion: the bass note is A, period.
-//
-// bassChroma is populated from the low-frequency bins in readFeatures().
-// fullChroma is the time-accumulated harmSum.
+// ── Chord detection — mirrors validated Python implementation ─────
+// Python analysis confirmed: lowpass chroma + argmax root works.
+// JS mirrors that exactly.
 function detectChord(){
-    const n   = Math.min(harmFilled, HARM_WIN);
-    if(n < 10) return; // not enough data yet
+    const n = Math.min(harmFilled, HARM_WIN);
+    if(n < 20) return;  // need at least 20 frames (~0.3s)
 
-    // Full chroma (accumulated, normalised)
-    const full = new Float32Array(12);
-    let ftot=0;
-    for(let i=0;i<12;i++){full[i]=harmSum[i]/n; ftot+=full[i];}
-    if(ftot<1e-6) return;
-    for(let i=0;i<12;i++) full[i]/=ftot;
+    // Normalised accumulated chroma
+    const ch = new Float32Array(12);
+    let tot=0;
+    for(let i=0;i<12;i++){ ch[i]=harmSum[i]/n; tot+=ch[i]; }
+    if(tot < 1e-6) return;
+    for(let i=0;i<12;i++) ch[i]/=tot;
 
-    // Bass chroma (accumulated, normalised) — separate accumulator for 55–350Hz only
-    const bass = new Float32Array(12);
-    let btot=0;
-    for(let i=0;i<12;i++){bass[i]=bassSum[i]/n; btot+=bass[i];}
+    // Confidence — need a clear peak
+    const maxC = Math.max(...ch);
+    if(maxC < 0.10) return;
 
-    // Find root:
-    // If bass has a clear dominant note, use it as root (strong threshold).
-    // Otherwise fall back to the strongest note in full chroma.
-    let root=0;
-    if(btot > 1e-6){
-        const bNorm=bass.map(x=>x/btot);
-        const bMax=Math.max(...bNorm);
-        if(bMax > 0.20){
-            // Bass has a clear dominant pitch class — that's our root
-            root=bNorm.indexOf(bMax);
-        } else {
-            // Bass is ambiguous — use full chroma strongest note
-            root=Array.from(full).indexOf(Math.max(...full));
-        }
-    } else {
-        root=Array.from(full).indexOf(Math.max(...full));
-    }
+    // Root = strongest pitch class (exactly as Python argmax)
+    let root=0, rootVal=0;
+    for(let i=0;i<12;i++) if(ch[i]>rootVal){ rootVal=ch[i]; root=i; }
 
-    // Confidence check — if full chroma has no strong peaks, hold last chord
-    if(Math.max(...full) < 0.12) return;
-
-    // With root locked, find best chord quality
+    // Quality = best template match with root fixed (exactly as Python)
     const order=['maj7','min7','dom7','maj','min','dim','aug','sus'];
     let bestType='maj', bestScore=-Infinity;
     for(const type of order){
         const tmpl=CHORD_TMPL[type];
         let score=0;
-        for(let i=0;i<12;i++){
-            score += full[(i+root)%12] * (tmpl[i] ? 2.5 : -0.8);
-        }
-        if(score>bestScore){bestScore=score; bestType=type;}
+        for(let i=0;i<12;i++)
+            score += ch[(i+root)%12] * (tmpl[i] ? 2.5 : -0.8);
+        if(score>bestScore){ bestScore=score; bestType=type; }
     }
 
     const cm=CHORD_MAP[bestType];
-    return {hue:cm.h, sat:cm.s, val:cm.v, label:NOTES[root]+cm.sfx};
+    return { hue:cm.h, sat:cm.s, val:cm.v, label:NOTES[root]+cm.sfx };
 }
 
 // ── Feature extraction ───────────────────────────────────────────
@@ -324,44 +299,36 @@ function readFeatures(){
     }
     if(ss>0) S.centroid=ema(S.centroid,clamp(ws/ss,400,5000),ALPHA);
 
-    // Chord chroma from LOW-PASS FILTERED analyser (melody already removed by hardware filter)
-    // This signal only contains frequencies 55–400Hz: bass notes and lower chord tones.
-    // No melody can survive a 400Hz lowpass, so what we see here IS the harmony.
+    // Chord chroma from low-pass filtered analyser.
+    // Python confirmed this signal is clean: A2=110Hz, E2=82Hz dominant for Amaj7.
     if(analyserChord){
-        const cfSize  = analyserChord.frequencyBinCount;
-        const cFreq   = new Float32Array(cfSize);
+        const cfSize = analyserChord.frequencyBinCount;  // 4096 for fftSize=8192
+        const cFreq  = new Float32Array(cfSize);
         analyserChord.getFloatFrequencyData(cFreq);
-        const cBHz    = sr / analyserChord.fftSize;
-        const ch      = new Float32Array(12);
+        const cBHz   = sr / analyserChord.fftSize;       // Hz per bin
+        const ch     = new Float32Array(12);
 
+        // Extract chroma from 55–380Hz only (below lowpass cutoff)
         for(let i=1;i<cfSize;i++){
             const hz=i*cBHz;
-            if(hz<55||hz>420) continue;
-            if(cFreq[i]<-80)  continue;
+            if(hz<55||hz>380) continue;
+            if(cFreq[i]<-72)  continue;  // ignore very weak bins
             const lin=Math.pow(10,cFreq[i]/20);
             const pc=((Math.round(69+12*Math.log2(hz/440))%12)+12)%12;
             ch[pc]+=lin;
         }
 
         const chTot=Array.from(ch).reduce((a,b)=>a+b,0)+1e-8;
-        const chNorm=ch.map(x=>x/chTot);
-
-        // Push to harmonic ring buffer
-        const old=harmBuf[harmIdx];
-        for(let i=0;i<12;i++){
-            harmSum[i]+=chNorm[i]-old[i];
-            harmBuf[harmIdx][i]=chNorm[i];
+        if(chTot>1e-6){
+            const chNorm=ch.map(x=>x/chTot);
+            const old=harmBuf[harmIdx];
+            for(let i=0;i<12;i++){
+                harmSum[i]+=chNorm[i]-old[i];
+                harmBuf[harmIdx][i]=chNorm[i];
+            }
+            harmIdx=(harmIdx+1)%HARM_WIN;
+            harmFilled=Math.min(harmFilled+1,HARM_WIN*2);
         }
-
-        // Bass chroma is the same signal — it's ALL bass after lowpass
-        const oldB=bassBuf[harmIdx];
-        for(let i=0;i<12;i++){
-            bassSum[i]+=chNorm[i]-oldB[i];
-            bassBuf[harmIdx][i]=chNorm[i];
-        }
-
-        harmIdx=(harmIdx+1)%HARM_WIN;
-        harmFilled=Math.min(harmFilled+1,HARM_WIN*2);
     }
 
     // Instant chroma from main analyser (full spectrum) — used for sky/tension only
@@ -419,21 +386,24 @@ async function init(){
         analyserNode.connect(silentGain);
         silentGain.connect(audioCtx.destination);
 
-        // Low-pass filter for chord detection — cuts everything above 400Hz.
+        // Low-pass filter for chord detection.
         // Melody lives 400Hz–4kHz. Chord roots/tones live 55–400Hz.
-        // This means the melody literally cannot affect chord detection.
+        // Python analysis confirmed: A2=110Hz, E2=82Hz dominate — well below 400Hz.
         lowpassFilter=audioCtx.createBiquadFilter();
         lowpassFilter.type='lowpass';
-        lowpassFilter.frequency.value=400;
-        lowpassFilter.Q.value=1.0;
+        lowpassFilter.frequency.value=380;  // slightly below 400 for clean cutoff
+        lowpassFilter.Q.value=0.7;          // Butterworth-like (matches scipy butter)
 
         analyserChord=audioCtx.createAnalyser();
-        analyserChord.fftSize=4096;
-        analyserChord.smoothingTimeConstant=0.9;
+        analyserChord.fftSize=8192;         // higher resolution for low frequencies
+        analyserChord.smoothingTimeConstant=0.92;
 
-        // Route: source → lowpassFilter → analyserChord → silentGain (silent)
+        // Dedicated silent gain for chord branch — keeps graph alive independently
+        const chordGain=audioCtx.createGain();
+        chordGain.gain.value=0.0001;        // not zero — prevents Chrome optimising away
         lowpassFilter.connect(analyserChord);
-        analyserChord.connect(silentGain);
+        analyserChord.connect(chordGain);
+        chordGain.connect(audioCtx.destination);
         await startMic();
         document.getElementById('overlay').classList.add('hidden');
         document.getElementById('ui').style.opacity='1';
@@ -811,8 +781,13 @@ function draw(ts){
         document.getElementById('tension-display').textContent=`◈  ${tl}  (${Math.round(S.tension*100)}%)`;
         document.getElementById('center-status').style.opacity=
             (S.rms>0.001&&(recording||filePlaying))||isReview?'0':'1';
+        // Show top 3 pitch classes from harmSum for diagnostic
+        const n=Math.min(harmFilled,HARM_WIN)||1;
+        const dbCh=Array.from({length:12},(_,i)=>({i,v:harmSum[i]/n}))
+                       .sort((a,b)=>b.v-a.v).slice(0,3)
+                       .map(x=>NOTES[x.i]+':'+x.v.toFixed(2)).join(' ');
         document.getElementById('debug').textContent=
-            `rms:${S.rms.toFixed(4)} chord:${currentChord.label||'—'} buf:${harmFilled}/${HARM_WIN} rec:${recording}`;
+            `rms:${S.rms.toFixed(4)} chord:${currentChord.label||'—'} buf:${harmFilled}/${HARM_WIN} top:[${dbCh}]`;
     }
 }
 
