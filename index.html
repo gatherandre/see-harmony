@@ -64,7 +64,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v30</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v31</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -197,7 +197,7 @@ const bassBuf = Array.from({length:HARM_WIN},()=>new Float32Array(12));
 
 let currentChord={hue:HUE_WARM,sat:0.6,val:0.5,label:''};
 const voteBuffer=[];
-const VOTE_N=36;     // ~0.6s at 60fps
+const VOTE_N=16;  // ~0.27s at 60fps — decay makes this responsive
 const MIN_VOTE_FRAC=0.40;  // 40% majority to change
 let chordHoldFrames=0;     // frames since last chord change
 const MIN_HOLD=60;         // minimum 1s hold before changing
@@ -357,15 +357,23 @@ function detectChord(){
         if(score>bestScore){ bestScore=score; bestRoot=r; bestType=type; }
     }
 
-    // Vote buffer — require 55% majority to change displayed chord
+    // Exponential decay voting — recent frames count more than old ones.
+    // This gives fast response to chord changes while smoothing noise.
     const label=NOTES[bestRoot]+(CHORD_SFX[bestType]||'');
     voteBuffer.push(label);
     if(voteBuffer.length>VOTE_N) voteBuffer.shift();
     const votes={};
-    for(const v of voteBuffer) votes[v]=(votes[v]||0)+1;
-    let winner=label, winCount=0;
-    for(const [k,v] of Object.entries(votes)) if(v>winCount){winner=k;winCount=v;}
-    if(votes[winner]/voteBuffer.length < 0.55) return;
+    const N=voteBuffer.length;
+    for(let i=0;i<N;i++){
+        const age=N-1-i;           // 0=newest, N-1=oldest
+        const weight=Math.pow(0.82,age);  // newer votes count more
+        const v=voteBuffer[i];
+        votes[v]=(votes[v]||0)+weight;
+    }
+    let winner=label, winScore=0, totalWeight=0;
+    for(const w of Object.values(votes)) totalWeight+=w;
+    for(const [k,v] of Object.entries(votes)) if(v>winScore){winner=k;winScore=v;}
+    if(winScore/totalWeight < 0.50) return;  // 50% weighted majority
 
     // Map winner to visual
     for(let r=0;r<12;r++){
