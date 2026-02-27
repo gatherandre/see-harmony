@@ -54,6 +54,7 @@
 <body>
 <canvas id="canvas"></canvas>
 <div id="debug"></div>
+<button id="diag-btn" onclick="runDiagnostic()" style="display:none;position:fixed;bottom:150px;left:36px;font-family:'JetBrains Mono',monospace;font-size:9px;padding:5px 10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);color:rgba(255,255,255,0.6);cursor:pointer;border-radius:2px;z-index:20;">⬡ diagnose</button>
 <div id="overlay">
     <div id="overlay-title">See Harmony</div>
     <div id="overlay-sub">Neural Conservatory · Synesthetic Music Feedback · v0.1</div>
@@ -409,6 +410,7 @@ async function init(){
         await startMic();
         document.getElementById('overlay').classList.add('hidden');
         document.getElementById('ui').style.opacity='1';
+        document.getElementById('diag-btn').style.display='block';
         requestAnimationFrame(loop);
     }catch(err){
         const el=document.getElementById('error-msg');
@@ -793,6 +795,58 @@ function draw(ts){
 }
 
 function loop(ts){ draw(ts); requestAnimationFrame(loop); }
+
+// ── Diagnostic — dumps chord analyser state to console ───────────
+function runDiagnostic(){
+    if(!analyserChord){ console.warn('analyserChord not initialised'); return; }
+    const fftSize  = analyserChord.fftSize;
+    const binCount = analyserChord.frequencyBinCount;
+    const freqData = new Float32Array(binCount);
+    analyserChord.getFloatFrequencyData(freqData);
+    const sr  = audioCtx.sampleRate;
+    const bHz = sr / fftSize;
+
+    console.log('=== CHORD ANALYSER DIAGNOSTIC ===');
+    console.log(`fftSize:${fftSize} binCount:${binCount} sr:${sr} bHz:${bHz.toFixed(3)}`);
+
+    // Check if analyserChord is getting any signal at all
+    const maxDb = Math.max(...freqData);
+    const minDb = Math.min(...freqData);
+    console.log(`dB range: min=${minDb.toFixed(1)} max=${maxDb.toFixed(1)}`);
+    if(maxDb < -100){ console.warn('NO SIGNAL in chord analyser — filter branch dead'); return; }
+
+    // Show strongest bins 55–400Hz
+    const NOTES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+    const ch = new Float32Array(12);
+    const peaks = [];
+    for(let i=1;i<binCount;i++){
+        const hz=i*bHz;
+        if(hz<40||hz>420) continue;
+        if(freqData[i]<-80) continue;
+        const lin=Math.pow(10,freqData[i]/20);
+        const pc=((Math.round(69+12*Math.log2(hz/440))%12)+12)%12;
+        ch[pc]+=lin;
+        peaks.push({hz,db:freqData[i],pc});
+    }
+    peaks.sort((a,b)=>b.db-a.db);
+    console.log('Top 10 frequency peaks (55-420Hz):');
+    peaks.slice(0,10).forEach(p=>
+        console.log(`  ${p.hz.toFixed(1)}Hz  ${NOTES[p.pc]}  ${p.db.toFixed(1)}dB`)
+    );
+
+    const tot=ch.reduce((a,b)=>a+b,0)+1e-8;
+    const chN=ch.map(x=>x/tot);
+    const sorted=[...chN.entries()].sort((a,b)=>b[1]-a[1]);
+    console.log('Chroma distribution:');
+    sorted.forEach(([i,v])=>console.log(`  ${NOTES[i]}: ${(v*100).toFixed(1)}%`));
+
+    // Also check main analyser for comparison
+    const freqMain=new Float32Array(analyserNode.frequencyBinCount);
+    analyserNode.getFloatFrequencyData(freqMain);
+    const maxMain=Math.max(...freqMain);
+    console.log(`Main analyser max dB: ${maxMain.toFixed(1)}`);
+    console.log('=================================');
+}
 
 cv=document.getElementById('canvas'); cx2=cv.getContext('2d');
 function resize(){W=cv.width=window.innerWidth;H=cv.height=window.innerHeight;}
