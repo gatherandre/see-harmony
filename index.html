@@ -30,7 +30,19 @@
         .btn.active { color:var(--fg-bright); background:rgba(255,255,255,0.13); }
         #file-input { display:none; }
 
-        #transport { display:none; align-items:center; gap:10px; padding:0 36px; pointer-events:all; }
+        #transport {
+            display: none;
+            position: fixed;
+            bottom: 64px;   /* sits directly above ribbon (RIBBON_H = 64px) */
+            left: 0; right: 0;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 36px;
+            background: rgba(5,5,8,0.72);
+            border-top: 1px solid rgba(255,255,255,0.06);
+            pointer-events: all;
+            z-index: 10;
+        }
         #transport.visible { display:flex; }
         .t-btn { width:32px; height:32px; background:rgba(255,255,255,0.09); border:1px solid rgba(255,255,255,0.22); border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:11px; color:var(--fg-bright); transition:background 0.2s; flex-shrink:0; }
         .t-btn:hover { background:rgba(255,255,255,0.18); }
@@ -57,8 +69,8 @@
         #start-btn:hover { background:rgba(255,255,255,0.07); border-color:rgba(255,255,255,0.65); letter-spacing:0.45em; }
         #error-msg { font-family:'JetBrains Mono',monospace; font-size:11px; color:rgba(255,120,90,0.9); display:none; margin-top:8px; }
 
-        /* debug strip — hidden by default */
-        #debug { position:fixed; bottom:70px; left:36px; font-family:'JetBrains Mono',monospace; font-size:9px; color:rgba(255,255,255,0.3); display:none; }
+        /* debug strip */
+        #debug { position:fixed; bottom:70px; left:36px; font-family:'JetBrains Mono',monospace; font-size:9px; color:rgba(255,255,255,0.5); display:block; }
     </style>
 </head>
 <body>
@@ -132,7 +144,7 @@ const KK_MAJ=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
 const KK_MIN=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
 const NOTES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 
-let audioCtx, analyserNode, pitchBuf, micStream;
+let audioCtx, analyserNode, pitchBuf, micStream, micSourceNode;
 let fileBuffer=null, fileSource=null, fileOffset=0, fileStartAt=0;
 let filePlaying=false, fileDuration=0, scriptNode=null;
 
@@ -274,9 +286,9 @@ async function startMic(){
     if(micStream) micStream.getTracks().forEach(t=>t.stop());
     if(audioCtx.state==='suspended') await audioCtx.resume();
     micStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false},video:false});
-    const src=audioCtx.createMediaStreamSource(micStream);
-    src.connect(analyserNode);
-    // NOT connected to destination — no feedback
+    micSourceNode=audioCtx.createMediaStreamSource(micStream);
+    micSourceNode.connect(analyserNode);
+    // NOT connected to destination — no feedback loop
     setStatus('Listening','play something');
     document.getElementById('transport').classList.remove('visible');
 }
@@ -290,6 +302,8 @@ async function switchToMic(){
 // ── file ────────────────────────────────────────────────────────
 async function loadFile(e){
     const f=e.target.files[0]; if(!f) return;
+    // Fully disconnect mic before connecting file source
+    if(micSourceNode){try{micSourceNode.disconnect();}catch(_){} micSourceNode=null;}
     if(micStream){micStream.getTracks().forEach(t=>t.stop());micStream=null;}
     cleanupFile();
     if(audioCtx.state==='suspended') await audioCtx.resume();
@@ -305,10 +319,12 @@ async function loadFile(e){
     playFile();
 }
 
-function playFile(){
+async function playFile(){
     if(!fileBuffer) return;
     cleanupFile();
-    if(audioCtx.state==='suspended') audioCtx.resume();
+    // Disconnect analyser from destination before reconnecting cleanly
+    try{analyserNode.disconnect();}catch(_){}
+    if(audioCtx.state==='suspended') await audioCtx.resume();
     fileSource=audioCtx.createBufferSource();
     fileSource.buffer=fileBuffer;
     fileSource.connect(analyserNode);
@@ -605,7 +621,7 @@ function draw(ts){
         document.getElementById('tension-display').textContent=`◈  ${tl}  (${Math.round(S.tension*100)}%)`;
         document.getElementById('center-status').style.opacity=S.rms>0.015?'0':'1';
         // debug
-        // document.getElementById('debug').textContent=`rms:${S.rms.toFixed(4)} cent:${S.centroid|0} ten:${S.tension.toFixed(2)} V.val:${V.val.toFixed(2)}`;
+        document.getElementById('debug').textContent=`rms:${S.rms.toFixed(4)} cent:${S.centroid|0} ten:${S.tension.toFixed(2)} chord:${currentChord.label||'—'}`;
     }
 }
 
