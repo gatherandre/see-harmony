@@ -737,7 +737,7 @@ async function analyzeFile(audioBuffer){
     try {
         const py = await loadPyodide_();
         // Pass audio to Python
-        py.globals.set('_samples', mono);
+        py.globals.set('_samples', Array.from(mono));  // Float32Array → JS Array → Python list
         py.globals.set('_sr', sr);
         const result = py.runPython(`analyse_audio(_samples.tolist(), _sr)`);
         const tl = JSON.parse(result);
