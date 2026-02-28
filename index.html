@@ -64,7 +64,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v32</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v33</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -729,23 +729,44 @@ async function analyzeFile(audioBuffer){
         raw.push(NOTES[bestR]+(CHORD_SFX[bestT]||''));
     }
 
-    // Median smooth over 5-frame window
+    // Aggressive smoothing: median over 11-frame window (~1.1s)
+    const WIN_SMOOTH = 11;
     const smoothed=raw.map((c,i)=>{
-        const win=raw.slice(Math.max(0,i-2),i+3).filter(Boolean);
+        const win=raw.slice(Math.max(0,i-5),i+6).filter(Boolean);
         if(!win.length) return c;
         const counts={};
         for(const w of win) counts[w]=(counts[w]||0)+1;
         return Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0];
     });
 
-    // Deduplicate into final timeline
-    const tl=[]; let prev=null;
-    for(let i=0;i<smoothed.length;i++){
-        const chord=smoothed[i];
-        if(chord&&chord!==prev){tl.push({t:parseFloat((i*HOP/sr).toFixed(2)),chord});prev=chord;}
+    // Require minimum chord duration: chord must persist for MIN_DUR seconds
+    const MIN_DUR = 1.0;  // seconds — chords shorter than this are ignored
+    const MIN_FRAMES = Math.ceil(MIN_DUR / (HOP/sr));
+
+    // Count consecutive runs and only keep chords that last long enough
+    const tl=[]; let prev=null; let runStart=0;
+    for(let i=0;i<=smoothed.length;i++){
+        const chord = i<smoothed.length ? smoothed[i] : null;
+        if(chord !== prev){
+            const runLen = i - runStart;
+            if(prev && runLen >= MIN_FRAMES){
+                tl.push({t:parseFloat((runStart*HOP/sr).toFixed(2)), chord:prev});
+            }
+            prev=chord; runStart=i;
+        }
     }
-    console.log(`Timeline: ${tl.length} changes`,tl);
-    return tl;
+
+    // If timeline is still too dense, merge short segments
+    const merged=[]; let last=null;
+    for(const entry of tl){
+        if(!last){ merged.push(entry); last=entry; continue; }
+        const gap = entry.t - last.t;
+        if(gap < MIN_DUR){ last.chord=entry.chord; continue; } // absorb short chord
+        merged.push(entry); last=entry;
+    }
+
+    console.log(`Timeline: ${merged.length} changes`, merged);
+    return merged;
 }
 
 async function loadFile(e){
