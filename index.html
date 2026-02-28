@@ -64,7 +64,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v31</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v32</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -175,7 +175,7 @@ let isStereo=false;
 // Stereo chroma accumulators (simplified — just pitch class energy per side)
 const stereoL=new Float32Array(12), stereoR=new Float32Array(12);
 let micStream=null, micSource=null;
-let fileBuffer=null, fileSource=null;
+let fileBuffer=null, fileSource=null, fileStartTime=0;
 let fileOffset=0, fileStartAt=0, filePlaying=false, fileDuration=0;
 
 // ── State ────────────────────────────────────────────────────────
@@ -196,6 +196,7 @@ const bassSum = new Float32Array(12);  // running sum — bass register only (55
 const bassBuf = Array.from({length:HARM_WIN},()=>new Float32Array(12));
 
 let currentChord={hue:HUE_WARM,sat:0.6,val:0.5,label:''};
+let chordTimeline=[];  // pre-computed [{t, chord}] from offline analysis
 const voteBuffer=[];
 const VOTE_N=16;  // ~0.27s at 60fps — decay makes this responsive
 const MIN_VOTE_FRAC=0.40;  // 40% majority to change
@@ -616,6 +617,137 @@ function updateRecBtn(){
 }
 
 // ── File ─────────────────────────────────────────────────────────
+// ── Offline pre-analysis ─────────────────────────────────────────
+// Analyzes the entire audio file before playback using Goertzel algorithm.
+// Produces a chord timeline [{t, chord}] with Python-quality accuracy.
+// File mode uses this timeline; mic mode uses real-time detection.
+async function analyzeFile(audioBuffer){
+    const sr=audioBuffer.sampleRate;
+    const ch0=audioBuffer.getChannelData(0);
+    const ch1=audioBuffer.numberOfChannels>1?audioBuffer.getChannelData(1):ch0;
+    const mono=new Float32Array(ch0.length);
+    for(let i=0;i<mono.length;i++) mono[i]=(ch0[i]+ch1[i])*0.5;
+
+    const WIN=Math.floor(2.0*sr), HOP=Math.floor(0.1*sr);
+
+    // Goertzel: efficient magnitude at a single frequency
+    function goertzel(seg,hz,fs){
+        const k=hz*seg.length/fs;
+        const omega=2*Math.PI*k/seg.length;
+        const coeff=2*Math.cos(omega);
+        let s0=0,s1=0,s2=0;
+        for(let n=0;n<seg.length;n++){s0=seg[n]+coeff*s1-s2;s2=s1;s1=s0;}
+        return Math.sqrt(s2*s2+s1*s1-coeff*s1*s2)/seg.length;
+    }
+
+    // Extract chroma from a window using Goertzel for each note in 82-500Hz
+    function extractChroma(seg){
+        const ch=new Float32Array(12), chb=new Float32Array(12);
+        for(let midi=45;midi<=83;midi++){
+            const hz=440*Math.pow(2,(midi-69)/12);
+            if(hz<82||hz>500) continue;
+            const mag=goertzel(seg,hz,sr);
+            const pc=((midi%12)+12)%12;
+            ch[pc]+=mag;
+            if(hz<=200) chb[pc]+=mag;
+        }
+        return {ch,chb};
+    }
+
+    // Key detection from first 15s
+    const keyLen=Math.min(Math.floor(15*sr),mono.length);
+    const {ch:kch}=extractChroma(mono.slice(0,keyLen));
+    let ktot=0; for(let i=0;i<12;i++) ktot+=kch[i];
+    const kn=kch.map(x=>x/(ktot+1e-8));
+    const KK_MAJ=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
+    const KK_MIN=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
+    const mc=kn.reduce((a,b)=>a+b,0)/12;
+    let bestKS=-Infinity,detKey=0,detMode='maj';
+    for(let r=0;r<12;r++){
+        for(const [mode,prof] of [['maj',KK_MAJ],['min',KK_MIN]]){
+            const pv=Array.from({length:12},(_,i)=>prof[(i-r+12)%12]);
+            const mp=pv.reduce((a,b)=>a+b,0)/12;
+            let n=0,dc=0,dp=0;
+            for(let i=0;i<12;i++){const a=kn[i]-mc,b=pv[i]-mp;n+=a*b;dc+=a*a;dp+=b*b;}
+            const cor=n/Math.sqrt(dc*dp+1e-10);
+            if(cor>bestKS){bestKS=cor;detKey=r;detMode=mode;}
+        }
+    }
+    console.log(`Offline key: ${NOTES[detKey]} ${detMode}`);
+
+    // Build diatonic search set
+    const MAJ_SCALE=[0,2,4,5,7,9,11],MIN_SCALE=[0,2,3,5,7,8,10];
+    const MAJ_Q=['maj','min','min','maj','maj','min','dim'];
+    const MIN_Q=['min','dim','maj','min','min','maj','maj'];
+    const scale=detMode==='maj'?MAJ_SCALE:MIN_SCALE;
+    const quals=detMode==='maj'?MAJ_Q:MIN_Q;
+    const seen=new Set(),search=[];
+    const addC=(root,type)=>{const k=root+'_'+type;if(!seen.has(k)){seen.add(k);search.push({root,type});}};
+    for(let i=0;i<scale.length;i++){
+        const root=(detKey+scale[i])%12,q=quals[i];
+        addC(root,q);
+        if(q==='maj')addC(root,'maj7');
+        if(q==='min')addC(root,'min7');
+        if(q==='dim'){addC(root,'m7b5');addC(root,'dim7');}
+        if(i===4)addC(root,'dom7');
+    }
+    for(let i=0;i<scale.length;i++){
+        const target=(detKey+scale[i])%12;
+        addC((target+7)%12,'dom7');addC((target+7)%12,'maj');
+    }
+    const bScale=detMode==='maj'?MIN_SCALE:MAJ_SCALE;
+    const bQuals=detMode==='maj'?MIN_Q:MAJ_Q;
+    for(let i=0;i<6;i++){
+        const root=(detKey+bScale[i])%12,q=bQuals[i];
+        addC(root,q);
+        if(q==='maj')addC(root,'dom7');
+        if(q==='min')addC(root,'min7');
+    }
+
+    // Analyze each window
+    const raw=[];
+    for(let start=0;start+WIN<mono.length;start+=HOP){
+        const seg=mono.slice(start,start+WIN);
+        let rms=0; for(let i=0;i<seg.length;i++) rms+=seg[i]*seg[i];
+        if(Math.sqrt(rms/seg.length)<0.001){raw.push(null);continue;}
+        const {ch,chb}=extractChroma(seg);
+        let ctot=0,btot=0;
+        for(let i=0;i<12;i++){ctot+=ch[i];btot+=chb[i];}
+        const cf=ch.map(x=>x/(ctot+1e-8));
+        const bf=chb.map(x=>x/(btot+1e-8));
+        if(Math.max(...cf)<0.08){raw.push(null);continue;}
+        let bassRoot=0,bassConf=0;
+        for(let i=0;i<12;i++) if(bf[i]>bassConf){bassConf=bf[i];bassRoot=i;}
+        let bestS=-Infinity,bestR=0,bestT='maj';
+        for(const {root:r,type:t} of search){
+            const tmpl=CHORD_TMPL[t]; if(!tmpl) continue;
+            let score=0;
+            for(let i=0;i<12;i++) score+=cf[(i+r)%12]*(tmpl[i]?2.5:-0.8);
+            if(r===bassRoot) score+=bassConf*8.0;
+            if(score>bestS){bestS=score;bestR=r;bestT=t;}
+        }
+        raw.push(NOTES[bestR]+(CHORD_SFX[bestT]||''));
+    }
+
+    // Median smooth over 5-frame window
+    const smoothed=raw.map((c,i)=>{
+        const win=raw.slice(Math.max(0,i-2),i+3).filter(Boolean);
+        if(!win.length) return c;
+        const counts={};
+        for(const w of win) counts[w]=(counts[w]||0)+1;
+        return Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0];
+    });
+
+    // Deduplicate into final timeline
+    const tl=[]; let prev=null;
+    for(let i=0;i<smoothed.length;i++){
+        const chord=smoothed[i];
+        if(chord&&chord!==prev){tl.push({t:parseFloat((i*HOP/sr).toFixed(2)),chord});prev=chord;}
+    }
+    console.log(`Timeline: ${tl.length} changes`,tl);
+    return tl;
+}
+
 async function loadFile(e){
     const f=e.target.files[0]; if(!f) return;
     if(micSource){try{micSource.disconnect();}catch(_){} micSource=null;}
@@ -626,6 +758,10 @@ async function loadFile(e){
     fileBuffer=await audioCtx.decodeAudioData(await f.arrayBuffer());
     fileDuration=fileBuffer.duration; fileOffset=0;
     inputMode='file';
+    // Pre-analyze chords offline — much more accurate than real-time
+    setStatus('Analyzing chords…','please wait');
+    chordTimeline=await analyzeFile(fileBuffer);
+    setStatus('','');
     document.getElementById('btn-mic').classList.remove('active');
     document.getElementById('btn-file').classList.add('active');
     document.getElementById('rec-btn').style.display='none';
@@ -667,6 +803,7 @@ function playFile(){
     }
     fileSource.start(0,clamp(fileOffset,0,fileDuration-0.01));
     fileStartAt=audioCtx.currentTime-fileOffset;
+    fileStartTime=fileStartAt;  // sync for chord timeline lookup
     filePlaying=true; recording=true;
     document.getElementById('play-btn').textContent='⏸';
     setStatus('Playing','');
@@ -740,8 +877,27 @@ function processVisuals(){
     const skyS=clamp((S.centroid-400)/4600,0.4,1.0);              // timbre → saturation
     const skyV=clamp(0.25+0.75*pitchT,0.25,1.0);                  // higher=brighter
 
-    // Semantic layer — chord (only when buffer is half-warmed)
-    if(hasSignal && harmFilled>=HARM_WIN/2){
+    // Semantic layer — chord detection
+    if(chordTimeline.length>0 && inputMode==='file'){
+        // FILE MODE: timeline pre-computed offline — accurate, no flickering
+        const now=audioCtx.currentTime-fileStartAt;
+        let chord=chordTimeline[0].chord;
+        for(const entry of chordTimeline){if(entry.t<=now)chord=entry.chord;else break;}
+        if(chord!==currentChord.label){
+            let found=false;
+            for(let r=0;r<12&&!found;r++){
+                for(const type of Object.keys(CHORD_MAP)){
+                    if(NOTES[r]+(CHORD_SFX[type]||CHORD_MAP[type].sfx||'')===chord){
+                        const cm=CHORD_MAP[type];
+                        currentChord={hue:cm.h,sat:cm.s,val:cm.v,label:chord};
+                        found=true;break;
+                    }
+                }
+            }
+            if(!found) currentChord={hue:HUE_WARM,sat:0.6,val:0.5,label:chord};
+        }
+    } else if(hasSignal && harmFilled>=HARM_WIN/2){
+        // MIC MODE: real-time detection
         const detected=detectChord();
         if(detected) currentChord=detected;
     }
