@@ -648,6 +648,9 @@ SFX={'maj':'','min':'m','dim':'dim','aug':'aug','maj7':'maj7','min7':'m7',
      'dom7':'7','dim7':'dim7','m7b5':'m7b5'}
 
 def analyse_audio(samples_list, sr):
+    # In Pyodide, JS typed arrays arrive as JsProxy — use .to_py() to convert
+    if hasattr(samples_list, 'to_py'):
+        samples_list = samples_list.to_py()
     audio = np.array(samples_list, dtype=np.float32)
     def bp(d,lo,hi):
         b,a=butter(4,[lo/(sr/2),hi/(sr/2)],btype='band')
@@ -737,7 +740,7 @@ async function analyzeFile(audioBuffer){
     try {
         const py = await loadPyodide_();
         // Pass audio to Python
-        py.globals.set('_samples', Array.from(mono));  // Float32Array → JS Array → Python list
+        py.globals.set('_samples', mono);  // pass Float32Array directly
         py.globals.set('_sr', sr);
         const result = py.runPython(`analyse_audio(_samples.tolist(), _sr)`);
         const tl = JSON.parse(result);
