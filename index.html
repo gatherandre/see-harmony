@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-  <script src="https://cdn.jsdelivr.net/pyodide/v0.27.3/full/pyodide.js"></script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>See Harmony — Neural Conservatory</title>
     <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300&family=JetBrains+Mono:wght@300&display=swap" rel="stylesheet">
@@ -65,7 +64,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v38</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v39</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -618,141 +617,155 @@ function updateRecBtn(){
 }
 
 // ── File ─────────────────────────────────────────────────────────
-// ── Offline pre-analysis via Pyodide (Python in browser) ────────
-// Loads pyodide + numpy + scipy once, then runs the exact Python
-// analysis code on every file. Same result as the CLI script.
+// ── Offline pre-analysis ─────────────────────────────────────────
+// Real FFT on BiquadFilter-rendered audio. Direct port of Python pipeline.
 
-let pyodideReady = null;
-
-async function loadPyodide_(){
-    if(pyodideReady) return pyodideReady;
-    setStatus('Loading Python…','first load may take 20s');
-    const py = await loadPyodide({indexURL:'https://cdn.jsdelivr.net/pyodide/v0.27.3/full/'});
-    await py.loadPackage(['numpy','scipy']);
-    // Install the analysis function
-    py.runPython(`
-import numpy as np
-from scipy.signal import butter, filtfilt
-from collections import Counter
-import json
-
-NOTES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
-KK_MAJ=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88]
-KK_MIN=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17]
-TMPL={'maj':[1,0,0,0,1,0,0,1,0,0,0,0],'min':[1,0,0,1,0,0,0,1,0,0,0,0],
-      'dim':[1,0,0,1,0,0,1,0,0,0,0,0],'aug':[1,0,0,0,1,0,0,0,1,0,0,0],
-      'maj7':[1,0,0,0,1,0,0,1,0,0,0,1],'min7':[1,0,0,1,0,0,0,1,0,0,1,0],
-      'dom7':[1,0,0,0,1,0,0,1,0,0,1,0],'dim7':[1,0,0,1,0,0,1,0,0,1,0,0],
-      'm7b5':[1,0,0,1,0,0,1,0,0,0,1,0]}
-SFX={'maj':'','min':'m','dim':'dim','aug':'aug','maj7':'maj7','min7':'m7',
-     'dom7':'7','dim7':'dim7','m7b5':'m7b5'}
-
-def analyse_audio(samples_list, sr):
-    # In Pyodide, JS typed arrays arrive as JsProxy — use .to_py() to convert
-    if hasattr(samples_list, 'to_py'):
-        samples_list = samples_list.to_py()
-    audio = np.array(samples_list, dtype=np.float32)
-    def bp(d,lo,hi):
-        b,a=butter(4,[lo/(sr/2),hi/(sr/2)],btype='band')
-        return filtfilt(b,a,d)
-    full=bp(audio,82,500); bass=bp(audio,82,200)
-    WIN=int(2.0*sr); HOP=int(0.5*sr)
-    # Key detection
-    kch=np.zeros(12)
-    for s in range(0,len(full)-WIN,int(4*sr)):
-        seg=full[s:s+WIN]; N=len(seg)
-        spec=np.abs(np.fft.rfft(seg*np.hanning(N)))
-        freqs=np.fft.rfftfreq(N,1/sr)
-        for i,hz in enumerate(freqs):
-            if 82<=hz<=500: kch[int(round(69+12*np.log2(hz/440)))%12]+=spec[i]
-    kch/=kch.sum()+1e-8; mc=kch.mean()
-    best=-np.inf; KEY=0; MODE='maj'
-    for r in range(12):
-        for mode,prof in [('maj',KK_MAJ),('min',KK_MIN)]:
-            pv=np.array([prof[(i-r)%12] for i in range(12)]); mp=pv.mean()
-            n=np.sum((kch-mc)*(pv-mp)); d=np.sqrt(np.sum((kch-mc)**2)*np.sum((pv-mp)**2))+1e-8
-            if n/d>best: best=n/d; KEY=r; MODE=mode
-    # Search set
-    MAJ_SCALE=[0,2,4,5,7,9,11]; MIN_SCALE=[0,2,3,5,7,8,10]
-    MAJ_Q=['maj','min','min','maj','maj','min','dim']
-    MIN_Q=['min','dim','maj','min','min','maj','maj']
-    scale=MAJ_SCALE if MODE=='maj' else MIN_SCALE
-    quals=MAJ_Q if MODE=='maj' else MIN_Q
-    seen=set(); search=[]
-    def add(r,t):
-        if (r,t) not in seen: seen.add((r,t)); search.append((r,t))
-    for i,(step,q) in enumerate(zip(scale,quals)):
-        r=(KEY+step)%12; add(r,q)
-        if q=='maj': add(r,'maj7')
-        if q=='min': add(r,'min7')
-        if q=='dim': add(r,'m7b5'); add(r,'dim7')
-        if i==4: add(r,'dom7')
-    for step in scale:
-        t=(KEY+step)%12; add((t+7)%12,'dom7'); add((t+7)%12,'maj')
-    # Analyse windows
-    raw=[]
-    for s in range(0,len(full)-WIN,HOP):
-        sf=full[s:s+WIN]; sb=bass[s:s+WIN]; N=len(sf)
-        freqs=np.fft.rfftfreq(N,1/sr)
-        specf=np.abs(np.fft.rfft(sf*np.hanning(N)))
-        specb=np.abs(np.fft.rfft(sb*np.hanning(N)))
-        chf=np.zeros(12); chb=np.zeros(12)
-        for i,hz in enumerate(freqs):
-            if hz<1: continue
-            pc=int(round(69+12*np.log2(hz/440)))%12
-            if 82<=hz<=500: chf[pc]+=specf[i]
-            if 82<=hz<=200: chb[pc]+=specb[i]
-        chf/=chf.sum()+1e-8; chb/=chb.sum()+1e-8
-        if chf.max()<0.08: raw.append(None); continue
-        br=int(np.argmax(chb)); bc=chb[br]
-        best_s=-np.inf; best_r=0; best_t='maj'
-        for r,t in search:
-            s2=sum(chf[(i+r)%12]*(2.5 if TMPL[t][i] else -0.8) for i in range(12))
-            if r==br: s2+=bc*8.0
-            if s2>best_s: best_s=s2; best_r=r; best_t=t
-        raw.append(NOTES[best_r]+SFX[best_t])
-    # Smooth + deduplicate
-    smoothed=[]
-    for i,c in enumerate(raw):
-        window=[x for x in raw[max(0,i-2):i+3] if x]
-        if not window: smoothed.append(c); continue
-        smoothed.append(Counter(window).most_common(1)[0][0])
-    result=[]; prev=None
-    for i,chord in enumerate(smoothed):
-        if chord and chord!=prev:
-            result.append({'t':round(i*HOP/sr,1),'chord':chord}); prev=chord
-    return json.dumps(result)
-`);
-    pyodideReady = py;
-    setStatus('','');
-    return py;
+function realFFTMag(signal){
+    const N = signal.length;
+    let n = 1; while(n < N) n <<= 1;
+    const re = new Float64Array(n), im = new Float64Array(n);
+    for(let i=0;i<N;i++) re[i]=signal[i];
+    for(let len=2;len<=n;len<<=1){
+        const ang=-2*Math.PI/len, wre=Math.cos(ang), wim=Math.sin(ang);
+        for(let i=0;i<n;i+=len){
+            let cr=1,ci=0;
+            for(let j=0;j<len/2;j++){
+                const ur=re[i+j],ui=im[i+j];
+                const vr=re[i+j+len/2]*cr-im[i+j+len/2]*ci;
+                const vi=re[i+j+len/2]*ci+im[i+j+len/2]*cr;
+                re[i+j]=ur+vr;im[i+j]=ui+vi;
+                re[i+j+len/2]=ur-vr;im[i+j+len/2]=ui-vi;
+                const tmp=cr*wre-ci*wim;ci=cr*wim+ci*wre;cr=tmp;
+            }
+        }
+    }
+    const mag=new Float32Array(n/2+1);
+    for(let i=0;i<=n/2;i++) mag[i]=Math.sqrt(re[i]*re[i]+im[i]*im[i]);
+    return {mag,n};
 }
 
 async function analyzeFile(audioBuffer){
-    // Decode to mono float32 at native sample rate
-    const sr = audioBuffer.sampleRate;
-    const ch0 = audioBuffer.getChannelData(0);
-    const ch1 = audioBuffer.numberOfChannels>1 ? audioBuffer.getChannelData(1) : ch0;
-    const mono = new Float32Array(ch0.length);
+    const sr=audioBuffer.sampleRate;
+    const ch0=audioBuffer.getChannelData(0);
+    const ch1=audioBuffer.numberOfChannels>1?audioBuffer.getChannelData(1):ch0;
+    const mono=new Float32Array(ch0.length);
     for(let i=0;i<mono.length;i++) mono[i]=(ch0[i]+ch1[i])*0.5;
 
-    setStatus('Analysing chords…','');
-    try {
-        const py = await loadPyodide_();
-        // Pass audio to Python
-        py.globals.set('_samples', mono);  // pass Float32Array directly
-        py.globals.set('_sr', sr);
-        const result = py.runPython(`analyse_audio(_samples, _sr)`);
-        const tl = JSON.parse(result);
-        console.log(`Timeline: ${tl.length} changes`, tl);
-        // Sync key to real-time system
-        setStatus('','');
-        return tl;
-    } catch(e) {
-        console.error('Pyodide analysis failed:', e);
-        setStatus('Analysis failed','');
-        return [];
+    // BiquadFilter bandpass via OfflineAudioContext — same as scipy butter
+    async function bp(signal,lo,hi){
+        const ctx=new OfflineAudioContext(1,signal.length,sr);
+        const buf=ctx.createBuffer(1,signal.length,sr);
+        buf.getChannelData(0).set(signal);
+        const src=ctx.createBufferSource(); src.buffer=buf;
+        const hp=ctx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=lo; hp.Q.value=0.707;
+        const lp=ctx.createBiquadFilter(); lp.type='lowpass';  lp.frequency.value=hi; lp.Q.value=0.707;
+        src.connect(hp); hp.connect(lp); lp.connect(ctx.destination);
+        src.start(0);
+        const out=await ctx.startRendering();
+        return out.getChannelData(0);
     }
+
+    console.log('Filtering...');
+    const full=await bp(mono,82,500);
+    const bass=await bp(mono,82,200);
+    console.log(`Filtered. full rms=${Math.sqrt(full.reduce((a,b)=>a+b*b,0)/full.length).toFixed(4)}`);
+
+    const WIN=Math.floor(2.0*sr), HOP=Math.floor(0.5*sr);
+
+    function chroma(sig,start,maxHz){
+        const seg=sig.slice(start,start+WIN);
+        const w=new Float32Array(WIN);
+        for(let i=0;i<WIN;i++) w[i]=seg[i]*(0.5-0.5*Math.cos(2*Math.PI*i/WIN));
+        const {mag,n}=realFFTMag(w);
+        const ch=new Float32Array(12);
+        for(let k=1;k<mag.length;k++){
+            const hz=k*sr/n;
+            if(hz<82||hz>maxHz) continue;
+            ch[((Math.round(69+12*Math.log2(hz/440))%12)+12)%12]+=mag[k];
+        }
+        return ch;
+    }
+
+    // Key detection
+    const KK_MAJ=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
+    const KK_MIN=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
+    const kch=new Float32Array(12);
+    for(let s=0;s+WIN<full.length;s+=Math.floor(4*sr)){
+        const c=chroma(full,s,500); for(let i=0;i<12;i++) kch[i]+=c[i];
+    }
+    let kt=0; for(let i=0;i<12;i++) kt+=kch[i];
+    const kn=Array.from(kch).map(x=>x/(kt+1e-8));
+    const mc=kn.reduce((a,b)=>a+b,0)/12;
+    let bestKS=-Infinity,detKey=0,detMode='maj';
+    for(let r=0;r<12;r++) for(const [mode,prof] of [['maj',KK_MAJ],['min',KK_MIN]]){
+        const pv=Array.from({length:12},(_,i)=>prof[(i-r+12)%12]);
+        const mp=pv.reduce((a,b)=>a+b,0)/12;
+        let n=0,dc=0,dp=0;
+        for(let i=0;i<12;i++){const a=kn[i]-mc,b=pv[i]-mp;n+=a*b;dc+=a*a;dp+=b*b;}
+        const cor=n/Math.sqrt(dc*dp+1e-10);
+        if(cor>bestKS){bestKS=cor;detKey=r;detMode=mode;}
+    }
+    console.log(`Key: ${NOTES[detKey]} ${detMode} (${bestKS.toFixed(3)})`);
+    detectedKey=detKey; detectedMode=detMode;
+    diatonicSet=buildDiatonicSet(detKey,detMode); keyLocked=true;
+
+    // Diatonic search set
+    const MAJ_SCALE=[0,2,4,5,7,9,11],MIN_SCALE=[0,2,3,5,7,8,10];
+    const MAJ_Q=['maj','min','min','maj','maj','min','dim'];
+    const MIN_Q=['min','dim','maj','min','min','maj','maj'];
+    const scale=detMode==='maj'?MAJ_SCALE:MIN_SCALE;
+    const quals=detMode==='maj'?MAJ_Q:MIN_Q;
+    const seen=new Set(),search=[];
+    const addC=(root,type)=>{const k=root+'_'+type;if(!seen.has(k)){seen.add(k);search.push({root,type});}};
+    for(let i=0;i<scale.length;i++){
+        const root=(detKey+scale[i])%12,q=quals[i];
+        addC(root,q);
+        if(q==='maj')addC(root,'maj7');
+        if(q==='min')addC(root,'min7');
+        if(q==='dim'){addC(root,'m7b5');addC(root,'dim7');}
+        if(i===4)addC(root,'dom7');
+    }
+    for(let i=0;i<scale.length;i++){const t=(detKey+scale[i])%12;addC((t+7)%12,'dom7');addC((t+7)%12,'maj');}
+    const bScale=detMode==='maj'?MIN_SCALE:MAJ_SCALE,bQuals=detMode==='maj'?MIN_Q:MAJ_Q;
+    for(let i=0;i<6;i++){const root=(detKey+bScale[i])%12,q=bQuals[i];addC(root,q);if(q==='maj')addC(root,'dom7');if(q==='min')addC(root,'min7');}
+
+    // Analyse windows
+    console.log('Analysing chords...');
+    const raw=[];
+    for(let start=0;start+WIN<full.length;start+=HOP){
+        const cf=chroma(full,start,500),cb=chroma(bass,start,200);
+        let ct=0,bt=0; for(let i=0;i<12;i++){ct+=cf[i];bt+=cb[i];}
+        if(ct<1e-8){raw.push(null);continue;}
+        const cfn=Array.from(cf).map(x=>x/(ct+1e-8));
+        const cbn=Array.from(cb).map(x=>x/(bt+1e-8));
+        if(Math.max(...cfn)<0.08){raw.push(null);continue;}
+        let br=0,bc=0; for(let i=0;i<12;i++) if(cbn[i]>bc){bc=cbn[i];br=i;}
+        let bestS=-Infinity,bestR=0,bestT='maj';
+        for(const {root:r,type:t} of search){
+            const tmpl=CHORD_TMPL[t]; if(!tmpl) continue;
+            let score=0;
+            for(let i=0;i<12;i++) score+=cfn[(i+r)%12]*(tmpl[i]?2.5:-0.8);
+            if(r===br) score+=bc*8.0;
+            if(score>bestS){bestS=score;bestR=r;bestT=t;}
+        }
+        raw.push(NOTES[bestR]+(CHORD_SFX[bestT]||''));
+    }
+
+    // Smooth + deduplicate
+    const smoothed=raw.map((c,i)=>{
+        const win=raw.slice(Math.max(0,i-2),i+3).filter(Boolean);
+        if(!win.length) return c;
+        const counts={};
+        for(const w of win) counts[w]=(counts[w]||0)+1;
+        return Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0];
+    });
+    const tl=[]; let prev=null;
+    for(let i=0;i<smoothed.length;i++){
+        const chord=smoothed[i];
+        if(chord&&chord!==prev){tl.push({t:parseFloat((i*HOP/sr).toFixed(1)),chord});prev=chord;}
+    }
+    console.log(`Timeline: ${tl.length} changes`,tl);
+    return tl;
 }
 
 async function loadFile(e){
