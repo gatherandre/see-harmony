@@ -29,9 +29,9 @@ The orb displays the detected chord name and pulses with the music. A ribbon at 
 Connect a microphone or plug in an instrument. See Harmony listens in real time and updates the visual field as you play. Designed for use in music lessons — students can see the harmonic colour of what they're playing without needing to read notation.
 
 ### 📁 File mode
-Upload any audio file (MP3, WAV, etc). See Harmony analyses the entire track before playback using Python-quality chord detection (numpy + scipy running via WebAssembly), then displays the correct chord in sync with the music.
+Upload any audio file (MP3, WAV, etc). See Harmony analyses the entire track automatically before playback using Python-quality chord detection (numpy + scipy running via WebAssembly), then displays the correct chord in sync with the music. No setup required — just upload and play.
 
-**First load takes ~20 seconds** while Python/scipy loads in the background. After that it's cached.
+**First load takes ~20 seconds** while Python/scipy loads in the background. After that it's cached for the session.
 
 ---
 
@@ -65,23 +65,21 @@ Mic mode uses a real-time version of the same pipeline with a rolling harmonic b
 ```
 see-harmony/
 ├── index.html      — the entire app
-├── analyse.py      — CLI tool to pre-analyse songs (optional, for offline use)
+├── analyse.py      — optional CLI reference (not required by the app)
 ├── README.md
 └── LICENSE
 ```
 
 ---
 
-## Using analyse.py (optional)
+## analyse.py (optional reference)
 
-For offline or batch analysis, run the Python script directly:
+The app handles analysis automatically via Pyodide. `analyse.py` is included only as a reference implementation and for offline use on slow connections:
 
 ```bash
 pip install numpy scipy pydub
 python3 analyse.py mysong.mp3
 ```
-
-Produces a JSON chord timeline identical to what the browser computes via Pyodide.
 
 ---
 
