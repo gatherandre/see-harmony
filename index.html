@@ -64,7 +64,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v35</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v37</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -618,146 +618,158 @@ function updateRecBtn(){
 
 // ── File ─────────────────────────────────────────────────────────
 // ── Offline pre-analysis ─────────────────────────────────────────
-// Mirrors Python exactly:
-// 1. BiquadFilter bandpass 82-500Hz (same as scipy butter)
-// 2. FFT + chroma extraction
-// 3. Key detection (KK profiles)
-// 4. Diatonic chord matching with bass root anchor
-// 5. Majority smoothing + deduplication
+// Direct port of Python: BiquadFilter → rendered buffer → real FFT → chroma → chords
+
+// Minimal radix-2 FFT (real input, returns magnitude spectrum)
+function realFFT(signal){
+    const N = signal.length;
+    // Zero-pad to next power of 2
+    let n = 1; while(n < N) n <<= 1;
+    const re = new Float64Array(n), im = new Float64Array(n);
+    for(let i=0;i<N;i++) re[i]=signal[i];
+    // Cooley-Tukey iterative FFT
+    for(let len=2;len<=n;len<<=1){
+        const ang = -2*Math.PI/len;
+        const wre = Math.cos(ang), wim = Math.sin(ang);
+        for(let i=0;i<n;i+=len){
+            let cur_re=1, cur_im=0;
+            for(let j=0;j<len/2;j++){
+                const u_re=re[i+j], u_im=im[i+j];
+                const v_re=re[i+j+len/2]*cur_re-im[i+j+len/2]*cur_im;
+                const v_im=re[i+j+len/2]*cur_im+im[i+j+len/2]*cur_re;
+                re[i+j]=u_re+v_re; im[i+j]=u_im+v_im;
+                re[i+j+len/2]=u_re-v_re; im[i+j+len/2]=u_im-v_im;
+                const tmp=cur_re*wre-cur_im*wim;
+                cur_im=cur_re*wim+cur_im*wre; cur_re=tmp;
+            }
+        }
+    }
+    // Return magnitude for positive frequencies only
+    const mag = new Float32Array(n/2+1);
+    for(let i=0;i<=n/2;i++) mag[i]=Math.sqrt(re[i]*re[i]+im[i]*im[i]);
+    return {mag, n};
+}
+
 async function analyzeFile(audioBuffer){
     const sr = audioBuffer.sampleRate;
 
     // Step 1: mix to mono
     const ch0 = audioBuffer.getChannelData(0);
-    const ch1 = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : ch0;
+    const ch1 = audioBuffer.numberOfChannels>1 ? audioBuffer.getChannelData(1) : ch0;
     const mono = new Float32Array(ch0.length);
     for(let i=0;i<mono.length;i++) mono[i]=(ch0[i]+ch1[i])*0.5;
 
-    // Step 2: bandpass filter using OfflineAudioContext + BiquadFilter
-    // This is the EXACT equivalent of scipy's butter bandpass filter
+    // Step 2: bandpass filter via OfflineAudioContext (same as scipy butter)
     async function bandpass(signal, lo, hi){
         const ctx = new OfflineAudioContext(1, signal.length, sr);
         const buf = ctx.createBuffer(1, signal.length, sr);
         buf.getChannelData(0).set(signal);
         const src = ctx.createBufferSource();
         src.buffer = buf;
-        // Highpass → Lowpass chain = bandpass
         const hp = ctx.createBiquadFilter();
-        hp.type = 'highpass'; hp.frequency.value = lo; hp.Q.value = 0.7;
+        hp.type='highpass'; hp.frequency.value=lo; hp.Q.value=0.707;
         const lp = ctx.createBiquadFilter();
-        lp.type = 'lowpass'; lp.frequency.value = hi; lp.Q.value = 0.7;
+        lp.type='lowpass'; lp.frequency.value=hi; lp.Q.value=0.707;
         src.connect(hp); hp.connect(lp); lp.connect(ctx.destination);
         src.start(0);
-        const rendered = await ctx.startRendering();
-        return rendered.getChannelData(0);
+        const out = await ctx.startRendering();
+        return out.getChannelData(0);
     }
 
-    // Filter once, use for both full and bass
+    console.log('Filtering audio...');
     const full = await bandpass(mono, 82, 500);
     const bass = await bandpass(mono, 82, 200);
 
-    // Step 3: FFT + chroma from a signal buffer
-    const WIN = Math.floor(2.0 * sr);  // 2s window — same as Python
-    const HOP = Math.floor(0.5 * sr);  // 0.5s hop
+    // Step 3: chroma extraction using real FFT on filtered signal
+    const WIN = Math.floor(2.0*sr);  // 2s window — same as Python
+    const HOP = Math.floor(0.5*sr);  // 0.5s hop
 
-    function extractChroma(sig, start){
-        const seg = sig.slice(start, start + WIN);
-        const N = seg.length;
+    function extractChroma(sig, start, maxHz){
+        const seg = sig.slice(start, start+WIN);
         // Hanning window
-        const windowed = new Float32Array(N);
-        for(let i=0;i<N;i++) windowed[i] = seg[i] * (0.5 - 0.5*Math.cos(2*Math.PI*i/N));
-        // FFT via OfflineAudioContext analyser is async — use direct DFT for key freqs
-        // But we need real FFT. Use the split-radix approach via a helper.
-        // Since we can't easily do sync FFT, compute chroma via direct frequency summation
-        // for the specific MIDI notes in 82-500Hz range (39 notes, fast enough)
+        const windowed = new Float32Array(WIN);
+        for(let i=0;i<WIN;i++) windowed[i]=seg[i]*(0.5-0.5*Math.cos(2*Math.PI*i/WIN));
+        const {mag, n} = realFFT(windowed);
         const ch = new Float32Array(12);
-        for(let midi=45; midi<=83; midi++){  // A2(110Hz) to B5(494Hz)
-            const hz = 440 * Math.pow(2, (midi-69)/12);
-            if(hz < 82 || hz > 500) continue;
-            // Goertzel on windowed signal — accurate single-frequency DFT
-            const k = hz * N / sr;
-            const omega = 2 * Math.PI * k / N;
-            const coeff = 2 * Math.cos(omega);
-            let s1=0, s2=0;
-            for(let n=0;n<N;n++){const s0=windowed[n]+coeff*s1-s2; s2=s1; s1=s0;}
-            const mag = Math.sqrt(s1*s1 + s2*s2 - coeff*s1*s2) / N;
-            ch[((midi%12)+12)%12] += mag;
+        // Sum FFT bins into chroma bins (same as Python)
+        for(let k=1;k<mag.length;k++){
+            const hz = k*sr/n;
+            if(hz < 82 || hz > maxHz) continue;
+            const midi = Math.round(69+12*Math.log2(hz/440));
+            const pc = ((midi%12)+12)%12;
+            ch[pc] += mag[k];
         }
         return ch;
     }
 
-    // Step 4: detect key using ONE large window (first 30s of filtered audio)
-    // Mirrors Python exactly — accumulate chroma over a long segment then correlate
+    // Step 4: key detection — sample every 4s across full track
     const KK_MAJ=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
     const KK_MIN=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
-    // Use multiple 2s windows across the track, evenly spaced, sum their chroma
     const kch = new Float32Array(12);
-    const keyHop = Math.floor(4.0 * sr);  // sample every 4s
-    let nKeyFrames = 0;
-    for(let start=0; start+WIN<full.length; start+=keyHop){
-        const c = extractChroma(full, start);
+    for(let s=0;s+WIN<full.length;s+=Math.floor(4*sr)){
+        const c=extractChroma(full,s,500);
         for(let i=0;i<12;i++) kch[i]+=c[i];
-        nKeyFrames++;
     }
     let ktot=0; for(let i=0;i<12;i++) ktot+=kch[i];
-    const kn = Array.from(kch).map(x=>x/(ktot+1e-8));
-    const mc = kn.reduce((a,b)=>a+b,0)/12;
+    const kn=Array.from(kch).map(x=>x/(ktot+1e-8));
+    const mc=kn.reduce((a,b)=>a+b,0)/12;
     let bestKS=-Infinity, detKey=0, detMode='maj';
     for(let r=0;r<12;r++){
         for(const [mode,prof] of [['maj',KK_MAJ],['min',KK_MIN]]){
-            const pv = Array.from({length:12},(_,i)=>prof[(i-r+12)%12]);
-            const mp = pv.reduce((a,b)=>a+b,0)/12;
+            const pv=Array.from({length:12},(_,i)=>prof[(i-r+12)%12]);
+            const mp=pv.reduce((a,b)=>a+b,0)/12;
             let n=0,dc=0,dp=0;
             for(let i=0;i<12;i++){const a=kn[i]-mc,b=pv[i]-mp;n+=a*b;dc+=a*a;dp+=b*b;}
             const cor=n/Math.sqrt(dc*dp+1e-10);
             if(cor>bestKS){bestKS=cor;detKey=r;detMode=mode;}
         }
     }
-    console.log(`Offline key: ${NOTES[detKey]} ${detMode} (${bestKS.toFixed(3)})`);
-    // Sync to real-time system so both use the same key
+    console.log(`Key: ${NOTES[detKey]} ${detMode} (${bestKS.toFixed(3)})`);
+    // Sync to real-time system
     detectedKey=detKey; detectedMode=detMode;
     diatonicSet=buildDiatonicSet(detKey,detMode);
     keyLocked=true;
 
-    // Step 5: build diatonic search set
-    const MAJ_SCALE=[0,2,4,5,7,9,11], MIN_SCALE=[0,2,3,5,7,8,10];
+    // Step 5: diatonic search set
+    const MAJ_SCALE=[0,2,4,5,7,9,11],MIN_SCALE=[0,2,3,5,7,8,10];
     const MAJ_Q=['maj','min','min','maj','maj','min','dim'];
     const MIN_Q=['min','dim','maj','min','min','maj','maj'];
     const scale=detMode==='maj'?MAJ_SCALE:MIN_SCALE;
     const quals=detMode==='maj'?MAJ_Q:MIN_Q;
-    const seen=new Set(), search=[];
+    const seen=new Set(),search=[];
     const addC=(root,type)=>{const k=root+'_'+type;if(!seen.has(k)){seen.add(k);search.push({root,type});}};
     for(let i=0;i<scale.length;i++){
-        const root=(detKey+scale[i])%12, q=quals[i];
+        const root=(detKey+scale[i])%12,q=quals[i];
         addC(root,q);
-        if(q==='maj') addC(root,'maj7');
-        if(q==='min') addC(root,'min7');
+        if(q==='maj')addC(root,'maj7');
+        if(q==='min')addC(root,'min7');
         if(q==='dim'){addC(root,'m7b5');addC(root,'dim7');}
-        if(i===4) addC(root,'dom7');
+        if(i===4)addC(root,'dom7');
     }
     for(let i=0;i<scale.length;i++){
-        const target=(detKey+scale[i])%12;
-        addC((target+7)%12,'dom7'); addC((target+7)%12,'maj');
+        const t=(detKey+scale[i])%12;
+        addC((t+7)%12,'dom7');addC((t+7)%12,'maj');
     }
     const bScale=detMode==='maj'?MIN_SCALE:MAJ_SCALE;
     const bQuals=detMode==='maj'?MIN_Q:MAJ_Q;
     for(let i=0;i<6;i++){
-        const root=(detKey+bScale[i])%12, q=bQuals[i];
+        const root=(detKey+bScale[i])%12,q=bQuals[i];
         addC(root,q);
-        if(q==='maj') addC(root,'dom7');
-        if(q==='min') addC(root,'min7');
+        if(q==='maj')addC(root,'dom7');
+        if(q==='min')addC(root,'min7');
     }
 
-    // Step 6: analyze each window
+    // Step 6: analyse each window — real FFT on filtered signal
+    console.log('Analysing chords...');
     const raw=[];
-    for(let start=0; start+WIN<full.length; start+=HOP){
-        const cf = extractChroma(full, start);
-        const cb = extractChroma(bass, start);
-        let ctot=0,btot=0;
-        for(let i=0;i<12;i++){ctot+=cf[i];btot+=cb[i];}
-        if(ctot<1e-8){raw.push(null);continue;}
-        const cfn=Array.from(cf).map(x=>x/(ctot+1e-8));
-        const cbn=Array.from(cb).map(x=>x/(btot+1e-8));
+    for(let start=0;start+WIN<full.length;start+=HOP){
+        const cf=extractChroma(full,start,500);
+        const cb=extractChroma(bass,start,200);
+        let ct=0,bt=0;
+        for(let i=0;i<12;i++){ct+=cf[i];bt+=cb[i];}
+        if(ct<1e-8){raw.push(null);continue;}
+        const cfn=Array.from(cf).map(x=>x/(ct+1e-8));
+        const cbn=Array.from(cb).map(x=>x/(bt+1e-8));
         if(Math.max(...cfn)<0.08){raw.push(null);continue;}
         let bassRoot=0,bassConf=0;
         for(let i=0;i<12;i++) if(cbn[i]>bassConf){bassConf=cbn[i];bassRoot=i;}
@@ -772,7 +784,7 @@ async function analyzeFile(audioBuffer){
         raw.push(NOTES[bestR]+(CHORD_SFX[bestT]||''));
     }
 
-    // Step 7: majority smooth over 5-frame window (2.5s), then deduplicate
+    // Step 7: majority smooth over 5-frame window, then deduplicate
     const smoothed=raw.map((c,i)=>{
         const win=raw.slice(Math.max(0,i-2),i+3).filter(Boolean);
         if(!win.length) return c;
@@ -792,7 +804,6 @@ async function analyzeFile(audioBuffer){
     return tl;
 }
 
-
 async function loadFile(e){
     const f=e.target.files[0]; if(!f) return;
     if(micSource){try{micSource.disconnect();}catch(_){} micSource=null;}
@@ -805,7 +816,7 @@ async function loadFile(e){
     inputMode='file';
     // Pre-analyze chords offline — much more accurate than real-time
     setStatus('Analyzing chords…','please wait');
-    chordTimeline=await analyzeFile(fileBuffer);
+    chordTimeline=await analyzeFile(fileBuffer, f.name);
     setStatus('','');
     document.getElementById('btn-mic').classList.remove('active');
     document.getElementById('btn-file').classList.add('active');
