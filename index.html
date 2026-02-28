@@ -742,7 +742,7 @@ async function analyzeFile(audioBuffer){
         // Pass audio to Python
         py.globals.set('_samples', mono);  // pass Float32Array directly
         py.globals.set('_sr', sr);
-        const result = py.runPython(`analyse_audio(_samples.tolist(), _sr)`);
+        const result = py.runPython(`analyse_audio(_samples, _sr)`);
         const tl = JSON.parse(result);
         console.log(`Timeline: ${tl.length} changes`, tl);
         // Sync key to real-time system
