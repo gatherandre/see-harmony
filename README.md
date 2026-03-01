@@ -106,6 +106,6 @@ The app is designed for use in guitar and general instrument instruction, where 
 
 ## Author
 
-André Gather — [gatherandre](https://github.com/gatherandre)  
+André Guimarães — [gatherandre](https://github.com/gatherandre)  
 Neural Conservatory MVP · 2026  
 MIT License
