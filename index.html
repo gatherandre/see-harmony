@@ -37,7 +37,7 @@
         #center-status{position:fixed;top:42%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;transition:opacity 0.8s;}
         #status-text{font-size:15px;font-weight:300;letter-spacing:0.25em;text-transform:uppercase;color:rgba(255,255,255,0.45);}
         #status-sub{font-size:11px;font-family:'JetBrains Mono',monospace;color:rgba(255,255,255,0.28);margin-top:8px;letter-spacing:0.1em;}
-        #ana-progress{width:220px;height:2px;background:rgba(255,255,255,0.12);border-radius:2px;margin:16px auto 0;display:none;}
+        #ana-bar{width:220px;height:2px;background:rgba(255,255,255,0.12);border-radius:2px;margin:16px auto 0;display:none;}
         #ana-fill{height:100%;width:0%;background:rgba(255,255,255,0.6);border-radius:2px;transition:width 0.5s ease;}
         #bottom-bar{padding:0 36px 22px;display:flex;justify-content:space-between;align-items:flex-end;pointer-events:none;}
         #pitch-display{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:300;letter-spacing:0.07em;color:rgba(255,255,255,0.55);line-height:2.2;}
@@ -66,7 +66,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v43</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v45</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -94,7 +94,7 @@
     <div id="center-status">
         <div id="status-text">Ready</div>
         <div id="status-sub">press Record or load a file</div>
-        <div id="ana-progress"><div id="ana-fill"></div></div>
+        <div id="ana-bar"><div id="ana-fill"></div></div>
     </div>
     <div id="bottom-bar">
         <div id="pitch-display">
@@ -201,206 +201,211 @@ const bassBuf = Array.from({length:HARM_WIN},()=>new Float32Array(12));
 let currentChord={hue:HUE_WARM,sat:0.6,val:0.5,label:''};
 let chordTimeline=[];
 
-// ── Pyodide Web Worker ────────────────────────────────────────────
-// Audio is resampled to 22050 Hz in JS before sending — this matches
-// analyse.py exactly and halves the data size.  The raw Float32 bytes
-// are sent as a transferable ArrayBuffer; Python reconstructs with
-// np.frombuffer(..., dtype='<f4') which is the reliable Pyodide path.
-let pyWorker=null, pyReady=false;
-let _pyResolve=null, _pyReject=null;
+// ── Essentia.js Web Worker ────────────────────────────────────────
+// Replaces Pyodide entirely. Essentia WASM (~2MB) loads in ~1s.
+// Uses proper HPCP (Harmonic Pitch Class Profile) — the correct
+// algorithm for polyphonic chord recognition, implemented in C++.
+// No Python, no 30MB download, no data conversion bugs.
 
-// Stage 1 — filtfilt bandpass (the only step that *must* be in Python)
-const PY_S1=`
-import numpy as np
-from scipy.signal import butter, filtfilt
-from collections import Counter
-import json
+let esWorker=null, esReady=false;
+let _esResolve=null, _esReject=null;
 
-audio = np.frombuffer(bytes(_abytes.to_py()), dtype='<f4').copy()
-sr    = int(_sr)  # always 22050
+const ES_WORKER_SRC=`
+// Essentia.js WASM worker
+// Loads essentia-wasm, runs HPCP + ChordsDetection on resampled audio
 
-def bp(d, lo, hi):
-    b, a = butter(4, [lo/(sr/2), hi/(sr/2)], btype='band')
-    return filtfilt(b, a, d)
+importScripts('https://cdn.jsdelivr.net/npm/essentia.js@0.1.3/dist/essentia-wasm.web.js');
 
-_full = bp(audio, 82, 500)
-_bass = bp(audio, 82, 200)
-str(len(audio))
-`;
+let essentia=null;
 
-// Stage 2 — key detection
-const PY_S2=`
-WIN  = int(2.0 * sr)
-HOP  = int(0.5 * sr)
-hann = np.hanning(WIN)
-KK_MAJ = np.array([6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88])
-KK_MIN = np.array([6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17])
-NOTES  = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
-
-def get_chroma(sig, start, max_hz):
-    seg = sig[start:start+WIN]
-    if len(seg)<WIN: seg=np.pad(seg,(0,WIN-len(seg)))
-    mag   = np.abs(np.fft.rfft(seg*hann))
-    freqs = np.fft.rfftfreq(WIN,1.0/sr)
-    ch    = np.zeros(12)
-    mask  = (freqs>=82)&(freqs<=max_hz)
-    pcs   = (np.round(69+12*np.log2(np.maximum(freqs[mask],1e-9)/440)).astype(int))%12
-    np.add.at(ch,pcs,mag[mask])
-    return ch
-
-kch=np.zeros(12)
-for s in range(0,len(_full)-WIN,int(1.0*sr)):
-    kch+=get_chroma(_full,s,500)
-kn=kch/(kch.sum()+1e-8); mc=kn.mean()
-best_ks=-np.inf; det_key=0; det_mode='maj'
-for r in range(12):
-    for mode,prof in [('maj',KK_MAJ),('min',KK_MIN)]:
-        pv=np.roll(prof,r); mp=pv.mean(); a=kn-mc; b=pv-mp
-        cor=np.dot(a,b)/(np.sqrt(np.dot(a,a)*np.dot(b,b))+1e-10)
-        if cor>best_ks: best_ks=cor; det_key=r; det_mode=mode
-
-MAJ_SCALE=[0,2,4,5,7,9,11]; MIN_SCALE=[0,2,3,5,7,8,10]
-MAJ_Q=['maj','min','min','maj','maj','min','dim']
-MIN_Q=['min','dim','maj','min','min','maj','maj']
-scale=MAJ_SCALE if det_mode=='maj' else MIN_SCALE
-quals=MAJ_Q     if det_mode=='maj' else MIN_Q
-
-CHORD_TMPL={
-    'maj':[1,0,0,0,1,0,0,1,0,0,0,0],'min':[1,0,0,1,0,0,0,1,0,0,0,0],
-    'maj7':[1,0,0,0,1,0,0,1,0,0,0,1],'min7':[1,0,0,1,0,0,0,1,0,0,1,0],
-    'dom7':[1,0,0,0,1,0,0,1,0,0,1,0],'dim':[1,0,0,1,0,0,1,0,0,0,0,0],
-    'dim7':[1,0,0,1,0,0,1,0,0,1,0,0],'m7b5':[1,0,0,1,0,0,1,0,0,0,1,0],
-}
-CHORD_SFX={'maj':'','min':'m','maj7':'maj7','min7':'m7','dom7':'7','dim':'dim','dim7':'dim7','m7b5':'m7b5'}
-
-seen=set(); search=[]
-def add_c(r,t):
-    k=(r,t)
-    if k not in seen: seen.add(k); search.append(k)
-for i,sd in enumerate(scale):
-    root=(det_key+sd)%12; q=quals[i]
-    add_c(root,q)
-    if q=='maj': add_c(root,'maj7')
-    if q=='min': add_c(root,'min7')
-    if q=='dim': add_c(root,'m7b5'); add_c(root,'dim7')
-    if i==4: add_c(root,'dom7')
-for i,sd in enumerate(scale):
-    t2=(det_key+sd)%12; add_c((t2+7)%12,'dom7'); add_c((t2+7)%12,'maj')
-b_scale=MIN_SCALE if det_mode=='maj' else MAJ_SCALE
-b_quals=MIN_Q    if det_mode=='maj' else MAJ_Q
-for i in range(6):
-    root=(det_key+b_scale[i])%12; q=b_quals[i]
-    add_c(root,q)
-    if q=='maj': add_c(root,'dom7')
-    if q=='min': add_c(root,'min7')
-NOTES[det_key]+(' min' if det_mode=='min' else '')
-`;
-
-// Stage 3 — chord scoring
-const PY_S3=`
-pos_w=2.5; neg_w=-0.8
-n_wins=(len(_full)-WIN)//HOP
-raw=[]
-for wi in range(n_wins):
-    start=wi*HOP
-    cf=get_chroma(_full,start,500); cb=get_chroma(_bass,start,200)
-    ct=cf.sum(); bt=cb.sum()
-    if ct<1e-8: raw.append(None); continue
-    cfn=cf/(ct+1e-8); cbn=cb/(bt+1e-8)
-    if cfn.max()<0.08: raw.append(None); continue
-    br=int(np.argmax(cbn)); bc=float(cbn[br])
-    best_s=-np.inf; best_r=0; best_t='maj'
-    for r,t2 in search:
-        tmpl=np.array(CHORD_TMPL[t2],dtype=float)
-        roll_idx=(np.arange(12)+r)%12
-        score=float(np.dot(cfn[roll_idx],np.where(tmpl,pos_w,neg_w)))
-        if r==br: score+=bc*8.0
-        if score>best_s: best_s=score; best_r=r; best_t=t2
-    raw.append(NOTES[best_r]+CHORD_SFX[best_t])
-str(len(raw))
-`;
-
-// Stage 4 — smooth + deduplicate
-const PY_S4=`
-smoothed=[]
-for i,c in enumerate(raw):
-    w=[x for x in raw[max(0,i-2):i+3] if x is not None]
-    smoothed.append(Counter(w).most_common(1)[0][0] if w else c)
-tl=[]; prev=None
-for i,chord in enumerate(smoothed):
-    if chord and chord!=prev:
-        tl.append({'t':round(i*HOP/sr,1),'chord':chord}); prev=chord
-key_label=NOTES[det_key]+(' min' if det_mode=='min' else '')
-json.dumps({'key':key_label,'timeline':tl})
-`;
-
-const PY_WORKER_SRC=`
-importScripts('https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js');
-let py=null;
 async function boot(){
-    self.postMessage({type:'progress',pct:5,msg:'Loading Python runtime\u2026'});
-    py=await loadPyodide();
-    self.postMessage({type:'progress',pct:18,msg:'Loading numpy + scipy\u2026'});
-    await py.loadPackage(['numpy','scipy']);
+    self.postMessage({type:'progress',pct:10,msg:'Loading Essentia WASM\u2026'});
+    await new Promise(res=>{
+        // EssentiaWASM is defined by the script above
+        EssentiaWASM().then(module=>{
+            essentia=new Essentia(module);
+            res();
+        });
+    });
     self.postMessage({type:'ready'});
 }
+
+// Map Essentia chord names to our display format
+// Essentia outputs e.g. "C", "Cm", "C7", "Cmaj7", "Cm7"
+function esChordToDisplay(name){
+    if(!name||name==='N'||name==='X') return null;
+    return name; // Essentia already uses our format
+}
+
 self.onmessage=async function(e){
     if(e.data.type!=='analyze') return;
     try{
-        py.globals.set('_abytes', new Uint8Array(e.data.buffer));
-        py.globals.set('_sr', e.data.sr);
-        self.postMessage({type:'progress',pct:25,msg:'Filtering audio (filtfilt)\u2026'});
-        py.runPython(e.data.s1);
-        self.postMessage({type:'progress',pct:45,msg:'Detecting key\u2026'});
-        const keyName=py.runPython(e.data.s2);
-        self.postMessage({type:'progress',pct:65,msg:'Scoring chords\u2026'});
-        py.runPython(e.data.s3);
-        self.postMessage({type:'progress',pct:88,msg:'Smoothing timeline\u2026'});
-        const raw=py.runPython(e.data.s4);
-        const result=JSON.parse(raw);
+        const audio=new Float32Array(e.data.buffer);
+        const sr=e.data.sr; // always 22050
+        const hopSize=Math.floor(sr*0.5);   // 0.5s hop = match old pipeline
+        const frameSize=Math.floor(sr*2.0); // 2s window
+
+        self.postMessage({type:'progress',pct:25,msg:'Computing HPCP features\u2026'});
+
+        // Essentia works frame-by-frame
+        const NOTES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+        const chordLabels=[];
+        const nFrames=Math.floor((audio.length-frameSize)/hopSize);
+
+        // Key detection: accumulate chroma over whole file
+        let keyChroma=new Array(12).fill(0);
+
+        for(let i=0;i<nFrames;i++){
+            const frame=audio.slice(i*hopSize, i*hopSize+frameSize);
+            const esFrame=essentia.arrayToVector(frame);
+
+            // Windowing
+            const windowed=essentia.Windowing(esFrame,'hann',frameSize,false,true,0,frameSize);
+
+            // Spectrum
+            const spec=essentia.Spectrum(windowed.frame,frameSize);
+
+            // Spectral peaks — needed for HPCP
+            const peaks=essentia.SpectralPeaks(
+                spec.spectrum,
+                100,   // magnitudeThreshold
+                5000,  // maxFrequency
+                100,   // maxPeaks
+                60,    // minFrequency
+                'byMagnitude',
+                sr
+            );
+
+            // HPCP — the key algorithm
+            const hpcp=essentia.HPCP(
+                peaks.frequencies,
+                peaks.magnitudes,
+                12,    // size
+                500,   // bandPreset max
+                false, // bandPreset
+                0.0,   // harmonicWeight
+                8,     // maxFrequency (octaves above reference)
+                true,  // nonLinear
+                'unitMax',
+                440,   // referenceFrequency
+                60,    // minFrequency
+                8,     // maxShifted
+                true,  // splitFrequency
+                500,   // splitFrequencyHz
+                sr,
+                true,  // weightType cosine
+                1.0
+            );
+
+            const hpcpArr=essentia.vectorToArray(hpcp.hpcp);
+            for(let k=0;k<12;k++) keyChroma[k]+=hpcpArr[k];
+
+            // Chord detection on this frame's HPCP
+            const chord=essentia.ChordsDetectionBeats(
+                [hpcp.hpcp],  // vector of HPCP vectors (just one frame)
+                [],           // beats (empty = detect without beats)
+                'tonictriad',
+                sr,
+                hopSize/sr    // hop duration in seconds
+            );
+            const name=essentia.vectorToArray(chord.chords)[0]||'';
+            chordLabels.push(esChordToDisplay(name));
+
+            // Progress
+            if(i%50===0){
+                const pct=25+Math.round(70*i/nFrames);
+                self.postMessage({type:'progress',pct,msg:'Analysing chords\u2026 '+Math.round(100*i/nFrames)+'%'});
+            }
+
+            esFrame.delete(); windowed.frame.delete(); spec.spectrum.delete();
+            peaks.frequencies.delete(); peaks.magnitudes.delete(); hpcp.hpcp.delete();
+        }
+
+        self.postMessage({type:'progress',pct:90,msg:'Building timeline\u2026'});
+
+        // Key detection using KK profiles
+        const KK_MAJ=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
+        const KK_MIN=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
+        const kTotal=keyChroma.reduce((a,b)=>a+b,0)||1;
+        const kn=keyChroma.map(x=>x/kTotal);
+        const mc=kn.reduce((a,b)=>a+b,0)/12;
+        let bestKS=-Infinity,detKey=0,detMode='maj';
+        for(let r=0;r<12;r++){
+            for(const [mode,prof] of [['maj',KK_MAJ],['min',KK_MIN]]){
+                const pv=Array.from({length:12},(_,i)=>prof[(i-r+12)%12]);
+                const mp=pv.reduce((a,b)=>a+b,0)/12;
+                let n=0,dc=0,dp=0;
+                for(let i=0;i<12;i++){const a=kn[i]-mc,b=pv[i]-mp;n+=a*b;dc+=a*a;dp+=b*b;}
+                const cor=n/Math.sqrt(dc*dp+1e-10);
+                if(cor>bestKS){bestKS=cor;detKey=r;detMode=mode;}
+            }
+        }
+        const keyLabel=NOTES[detKey]+(detMode==='min'?' min':'');
+
+        // Smooth chord labels (5-frame median)
+        const smoothed=chordLabels.map((c,i)=>{
+            const w=chordLabels.slice(Math.max(0,i-2),i+3).filter(Boolean);
+            if(!w.length) return c;
+            const counts={};
+            for(const x of w) counts[x]=(counts[x]||0)+1;
+            return Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0];
+        });
+
+        // Deduplicate into timeline
+        const tl=[]; let prev=null;
+        for(let i=0;i<smoothed.length;i++){
+            const chord=smoothed[i];
+            if(chord&&chord!==prev){
+                tl.push({t:parseFloat((i*hopSize/sr).toFixed(1)),chord});
+                prev=chord;
+            }
+        }
+
         self.postMessage({type:'progress',pct:100,msg:'Done'});
-        self.postMessage({type:'done',key:result.key,timeline:result.timeline});
+        self.postMessage({type:'done',key:keyLabel,timeline:tl});
+
     }catch(err){
-        self.postMessage({type:'fail',msg:err.toString()});
+        self.postMessage({type:'fail',msg:err.toString()+' '+err.stack});
     }
 };
+
 boot().catch(err=>self.postMessage({type:'fail',msg:err.toString()}));
 `;
 
-function initPyodideWorker(){
+function initEssentiaWorker(){
     try{
-        const blob=new Blob([PY_WORKER_SRC],{type:'application/javascript'});
-        pyWorker=new Worker(URL.createObjectURL(blob));
-        pyWorker.onmessage=function(e){
+        const blob=new Blob([ES_WORKER_SRC],{type:'application/javascript'});
+        esWorker=new Worker(URL.createObjectURL(blob));
+        esWorker.onmessage=function(e){
             if(e.data.type==='ready'){
-                pyReady=true;
-                console.log('[Pyodide] ready');
+                esReady=true;
+                console.log('[Essentia] ready');
             }else if(e.data.type==='progress'){
-                console.log('[Pyodide]',e.data.pct+'%',e.data.msg);
-                if(_pyResolve){ setStatus('Analysing\u2026',e.data.msg); setProgress(e.data.pct); }
+                console.log('[Essentia]',e.data.pct+'%',e.data.msg);
+                if(_esResolve){setStatus('Analysing\u2026',e.data.msg);setProgress(e.data.pct);}
             }else if(e.data.type==='done'){
-                if(_pyResolve){
+                if(_esResolve){
                     setProgress(null);
-                    console.log('[Pyodide] key:',e.data.key,'changes:',e.data.timeline.length);
-                    console.log('[Pyodide] first 10:',JSON.stringify(e.data.timeline.slice(0,10)));
-                    _pyResolve({key:e.data.key,timeline:e.data.timeline});
-                    _pyResolve=null; _pyReject=null;
+                    console.log('[Essentia] key:',e.data.key,'changes:',e.data.timeline.length);
+                    console.log('[Essentia] first 10:',JSON.stringify(e.data.timeline.slice(0,10)));
+                    _esResolve({key:e.data.key,timeline:e.data.timeline});
+                    _esResolve=null;_esReject=null;
                 }
             }else if(e.data.type==='fail'){
-                console.error('[Pyodide] FAIL:',e.data.msg);
+                console.error('[Essentia] FAIL:',e.data.msg);
                 setProgress(null);
-                if(_pyReject){_pyReject(new Error(e.data.msg));_pyResolve=null;_pyReject=null;}
+                if(_esReject){_esReject(new Error(e.data.msg));_esResolve=null;_esReject=null;}
             }
         };
-        pyWorker.onerror=function(e){
-            console.error('[Pyodide] worker error:',e.message);
+        esWorker.onerror=function(e){
+            console.error('[Essentia] worker error:',e.message);
             setProgress(null);
-            if(_pyReject){_pyReject(new Error(e.message));_pyResolve=null;_pyReject=null;}
-            pyWorker=null;
+            if(_esReject){_esReject(new Error(e.message));_esResolve=null;_esReject=null;}
+            esWorker=null;
         };
     }catch(err){
-        console.warn('[Pyodide] worker init failed:',err.message);
-        pyWorker=null;
+        console.warn('[Essentia] init failed:',err.message);
+        esWorker=null;
     }
 }
 const voteBuffer=[];
@@ -760,7 +765,7 @@ async function init(){
         document.getElementById('ui').style.opacity='1';
         document.getElementById('diag-btn').style.display='block';
         requestAnimationFrame(loop);
-        initPyodideWorker();
+        initEssentiaWorker(); // warm up in background
     }catch(err){
         const el=document.getElementById('error-msg');
         el.style.display='block';
@@ -823,47 +828,37 @@ function updateRecBtn(){
     recording?btn.classList.add('recording'):btn.classList.remove('recording');
 }
 
-// ── File analysis — Pyodide + 22050 Hz resampling ────────────────
-// CRITICAL: browser AudioContext runs at 44100 Hz.  We resample down
-// to 22050 Hz with OfflineAudioContext before sending to Python.
-// This (a) matches analyse.py exactly, (b) halves data size, and
-// (c) avoids Uint8Array-to-bytearray corruption on large buffers.
-const ANALYSIS_SR = 22050;
+// ── File analysis — Essentia.js WASM ─────────────────────────────
+// Replaces Pyodide. Audio resampled to 22050 Hz before analysis.
+const ANALYSIS_SR=22050;
 
 async function analyzeFile(audioBuffer){
-    // ── Step 1: stereo→mono, resample to 22050 Hz ─────────────────
-    setStatus('Analysing\u2026','resampling audio\u2026'); setProgress(12);
-    const nSamples = Math.ceil(audioBuffer.duration * ANALYSIS_SR);
-    const offCtx   = new OfflineAudioContext(1, nSamples, ANALYSIS_SR);
-    const src      = offCtx.createBufferSource();
-    src.buffer     = audioBuffer;
-    src.connect(offCtx.destination);
-    src.start(0);
-    const resampled = await offCtx.startRendering();
-    const mono      = resampled.getChannelData(0);   // Float32, 22050 Hz, mono
+    // Resample to 22050 Hz mono via OfflineAudioContext
+    setStatus('Analysing\u2026','resampling audio\u2026'); setProgress(8);
+    const nSamples=Math.ceil(audioBuffer.duration*ANALYSIS_SR);
+    const offCtx=new OfflineAudioContext(1,nSamples,ANALYSIS_SR);
+    const src=offCtx.createBufferSource(); src.buffer=audioBuffer;
+    src.connect(offCtx.destination); src.start(0);
+    const resampled=await offCtx.startRendering();
+    const mono=resampled.getChannelData(0);
 
-    // ── Step 2: wait for Pyodide if still loading ─────────────────
-    if(pyWorker && !pyReady){
-        setStatus('Analysing\u2026','waiting for Python runtime\u2026'); setProgress(15);
+    // Wait for Essentia WASM if still loading
+    if(esWorker&&!esReady){
+        setStatus('Analysing\u2026','loading Essentia WASM\u2026'); setProgress(10);
         await new Promise((res,rej)=>{
-            const deadline=Date.now()+120000;
+            const dl=Date.now()+30000;
             const poll=setInterval(()=>{
-                if(pyReady){clearInterval(poll);res();}
-                else if(!pyWorker||Date.now()>deadline){clearInterval(poll);rej(new Error('Pyodide timeout'));}
-            },300);
+                if(esReady){clearInterval(poll);res();}
+                else if(!esWorker||Date.now()>dl){clearInterval(poll);rej(new Error('Essentia timeout'));}
+            },200);
         });
     }
-    if(!pyWorker||!pyReady) throw new Error('Pyodide not available');
+    if(!esWorker||!esReady) throw new Error('Essentia not available');
 
-    // ── Step 3: transfer to worker as raw bytes ────────────────────
     return new Promise((resolve,reject)=>{
-        _pyResolve=resolve; _pyReject=reject;
+        _esResolve=resolve; _esReject=reject;
         const buf=mono.buffer.slice(0);
-        pyWorker.postMessage(
-            {type:'analyze', buffer:buf, sr:ANALYSIS_SR,
-             s1:PY_S1, s2:PY_S2, s3:PY_S3, s4:PY_S4},
-            [buf]
-        );
+        esWorker.postMessage({type:'analyze',buffer:buf,sr:ANALYSIS_SR},[buf]);
     });
 }
 
@@ -877,22 +872,23 @@ async function loadFile(e){
     fileBuffer=await audioCtx.decodeAudioData(await f.arrayBuffer());
     fileDuration=fileBuffer.duration; fileOffset=0;
     inputMode='file';
-    setStatus('Analysing chords\u2026', pyReady?'resampling audio\u2026':'loading Python runtime (~20s first time)\u2026');
-    setProgress(8);
+    setStatus('Analysing chords\u2026', esReady ? 'resampling audio\u2026' : 'loading Essentia WASM (~2s)\u2026');
+    setProgress(5);
     try{
         const result=await analyzeFile(fileBuffer);
         chordTimeline=result.timeline||result;
         if(result.key){
-            const kstr=(result.key||'').replace(/ min$/,'').replace(/ maj$/,'').trim();
+            const kstr=result.key.replace(/ min$/,'').replace(/ maj$/,'').trim();
             const ki=NOTES.indexOf(kstr);
             if(ki>=0){
                 detectedKey=ki;
-                detectedMode=(result.key||'').endsWith('min')?'min':'maj';
+                detectedMode=result.key.endsWith('min')?'min':'maj';
                 diatonicSet=buildDiatonicSet(detectedKey,detectedMode);
                 keyLocked=true;
             }
         }
-        console.log('SUCCESS: timeline has',chordTimeline.length,'changes',chordTimeline);
+        console.log('SUCCESS: timeline has',chordTimeline.length,'changes');
+        console.log('Key:',result.key,'First 10:',JSON.stringify(chordTimeline.slice(0,10)));
     }catch(err){
         console.error('analyzeFile FAILED:',err.message);
         chordTimeline=[];
@@ -997,11 +993,9 @@ function setStatus(t,s){
     document.getElementById('status-sub').textContent=s||'';
 }
 function setProgress(pct){
-    const wrap=document.getElementById('ana-progress');
-    const fill=document.getElementById('ana-fill');
-    if(pct===null){wrap.style.display='none';fill.style.width='0%';return;}
-    wrap.style.display='block';
-    fill.style.width=Math.round(pct)+'%';
+    const bar=document.getElementById('ana-bar'),fill=document.getElementById('ana-fill');
+    if(pct===null){bar.style.display='none';fill.style.width='0%';return;}
+    bar.style.display='block';fill.style.width=Math.round(pct)+'%';
 }
 
 // ── Visual processing ────────────────────────────────────────────
