@@ -64,7 +64,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v39</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v41</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -197,6 +197,222 @@ const bassBuf = Array.from({length:HARM_WIN},()=>new Float32Array(12));
 
 let currentChord={hue:HUE_WARM,sat:0.6,val:0.5,label:''};
 let chordTimeline=[];  // pre-computed [{t, chord}] from offline analysis
+
+// ── Pyodide Web Worker ───────────────────────────────────────────
+let pyWorker = null;
+let pyReady  = false;
+let _analyzeResolve = null, _analyzeReject = null;
+
+const PYTHON_ANALYSIS = `
+import numpy as np
+from scipy.signal import butter, filtfilt
+import json
+
+try:
+    audio = np.asarray(_audio_js, dtype=np.float32).copy()
+except Exception:
+    audio = np.array(list(_audio_js), dtype=np.float32)
+sr    = int(_sr)
+
+def bp(d, lo, hi):
+    b, a = butter(4, [lo/(sr/2), hi/(sr/2)], btype='band')
+    return filtfilt(b, a, d)
+
+full = bp(audio, 82, 500)
+bass = bp(audio, 82, 200)
+
+WIN = int(2.0 * sr)
+HOP = int(0.5 * sr)
+hann = np.hanning(WIN)
+
+KK_MAJ = np.array([6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88])
+KK_MIN = np.array([6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17])
+NOTES  = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+
+CHORD_TMPL = {
+    'maj':     np.array([1,0,0,0,1,0,0,1,0,0,0,0],dtype=float),
+    'min':     np.array([1,0,0,1,0,0,0,1,0,0,0,0],dtype=float),
+    'dim':     np.array([1,0,0,1,0,0,1,0,0,0,0,0],dtype=float),
+    'aug':     np.array([1,0,0,0,1,0,0,0,1,0,0,0],dtype=float),
+    'maj7':    np.array([1,0,0,0,1,0,0,1,0,0,0,1],dtype=float),
+    'min7':    np.array([1,0,0,1,0,0,0,1,0,0,1,0],dtype=float),
+    'dom7':    np.array([1,0,0,0,1,0,0,1,0,0,1,0],dtype=float),
+    'dim7':    np.array([1,0,0,1,0,0,1,0,0,1,0,0],dtype=float),
+    'm7b5':    np.array([1,0,0,1,0,0,1,0,0,0,1,0],dtype=float),
+    'minmaj7': np.array([1,0,0,1,0,0,0,1,0,0,0,1],dtype=float),
+}
+CHORD_SFX = {
+    'maj':'','min':'m','dim':'dim','aug':'aug',
+    'maj7':'maj7','min7':'m7','dom7':'7',
+    'dim7':'dim7','m7b5':'m7b5','minmaj7':'mM7'
+}
+
+def get_chroma(sig, start, max_hz):
+    seg = sig[start:start+WIN]
+    if len(seg) < WIN:
+        seg = np.pad(seg,(0,WIN-len(seg)))
+    mag   = np.abs(np.fft.rfft(seg * hann))
+    freqs = np.fft.rfftfreq(WIN, 1.0/sr)
+    ch = np.zeros(12)
+    mask  = (freqs >= 82) & (freqs <= max_hz)
+    fi    = freqs[mask];  mi = mag[mask]
+    if len(fi) == 0: return ch
+    pcs = (np.round(69 + 12*np.log2(fi/440)).astype(int)) % 12
+    np.add.at(ch, pcs, mi)
+    return ch
+
+# Key detection — sample every 1 second for denser coverage
+kch = np.zeros(12)
+for s in range(0, len(full)-WIN, int(1.0*sr)):
+    kch += get_chroma(full, s, 500)
+kn = kch / (kch.sum() + 1e-8)
+mc = kn.mean()
+
+best_ks = -np.inf; det_key = 0; det_mode = 'maj'
+for r in range(12):
+    for mode, prof in [('maj', KK_MAJ), ('min', KK_MIN)]:
+        pv = np.roll(prof, r);  mp = pv.mean()
+        a  = kn - mc;           b  = pv - mp
+        cor = np.dot(a,b) / (np.sqrt(np.dot(a,a)*np.dot(b,b)) + 1e-10)
+        if cor > best_ks:
+            best_ks = cor; det_key = r; det_mode = mode
+
+MAJ_SCALE=[0,2,4,5,7,9,11]; MIN_SCALE=[0,2,3,5,7,8,10]
+MAJ_Q=['maj','min','min','maj','maj','min','dim']
+MIN_Q=['min','dim','maj','min','min','maj','maj']
+scale = MAJ_SCALE if det_mode=='maj' else MIN_SCALE
+quals = MAJ_Q    if det_mode=='maj' else MIN_Q
+
+seen=set(); search=[]
+def add_c(root, t):
+    k=(root,t)
+    if k not in seen:
+        seen.add(k); search.append(k)
+
+for i,sd in enumerate(scale):
+    root=(det_key+sd)%12; q=quals[i]
+    add_c(root,q)
+    if q=='maj': add_c(root,'maj7')
+    if q=='min': add_c(root,'min7')
+    if q=='dim': add_c(root,'m7b5'); add_c(root,'dim7')
+    if i==4: add_c(root,'dom7')
+
+for i,sd in enumerate(scale):
+    t=(det_key+sd)%12
+    add_c((t+7)%12,'dom7'); add_c((t+7)%12,'maj')
+
+b_scale=MIN_SCALE if det_mode=='maj' else MAJ_SCALE
+b_quals=MIN_Q    if det_mode=='maj' else MAJ_Q
+for i in range(6):
+    root=(det_key+b_scale[i])%12; q=b_quals[i]
+    add_c(root,q)
+    if q=='maj': add_c(root,'dom7')
+    if q=='min': add_c(root,'min7')
+
+# Score each window
+raw=[]; n_wins=(len(full)-WIN)//HOP
+weights = np.where(np.array([t[1] for t in [(0,'')]]+list(range(12))) is not None, 2.5, -0.8)  # placeholder
+pos_w = 2.5; neg_w = -0.8
+
+for wi in range(n_wins):
+    start=wi*HOP
+    cf=get_chroma(full,start,500); cb=get_chroma(bass,start,200)
+    ct=cf.sum(); bt=cb.sum()
+    if ct < 1e-8: raw.append(None); continue
+    cfn=cf/(ct+1e-8); cbn=cb/(bt+1e-8)
+    if cfn.max()<0.08: raw.append(None); continue
+    br=int(np.argmax(cbn)); bc=float(cbn[br])
+    best_s=-np.inf; best_r=0; best_t='maj'
+    for r,t in search:
+        tmpl=CHORD_TMPL[t]
+        roll_idx=(np.arange(12)+r)%12
+        score=float(np.sum(cfn[roll_idx]*np.where(tmpl,pos_w,neg_w)))
+        if r==br: score+=bc*8.0
+        if score>best_s: best_s=score; best_r=r; best_t=t
+    raw.append(NOTES[best_r]+CHORD_SFX[best_t])
+
+# 5-frame median smooth
+from collections import Counter
+smoothed=[]
+for i,c in enumerate(raw):
+    w=[x for x in raw[max(0,i-2):i+3] if x is not None]
+    smoothed.append(Counter(w).most_common(1)[0][0] if w else c)
+
+# Deduplicate
+tl=[]; prev=None
+for i,chord in enumerate(smoothed):
+    if chord and chord!=prev:
+        tl.append({'t':round(i*HOP/sr,1),'chord':chord}); prev=chord
+
+json.dumps(tl)
+`;
+
+const PY_WORKER_SRC = `
+importScripts('https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js');
+
+let py = null;
+
+async function boot() {
+    self.postMessage({type:'status', msg:'Loading Python runtime…'});
+    py = await loadPyodide();
+    self.postMessage({type:'status', msg:'Loading numpy + scipy…'});
+    await py.loadPackage(['numpy','scipy']);
+    self.postMessage({type:'ready'});
+}
+
+self.onmessage = async function(e) {
+    if (e.data.type === 'analyze') {
+        try {
+            self.postMessage({type:'status', msg:'Filtering audio (filtfilt)…'});
+            // Reconstruct Float32Array from transferred buffer
+            const mono = new Float32Array(e.data.buffer);
+            py.globals.set('_audio_js', mono);
+            py.globals.set('_sr', e.data.sr);
+            self.postMessage({type:'status', msg:'Extracting chroma + scoring chords…'});
+            const result = py.runPython(e.data.pyCode);
+            self.postMessage({type:'done', timeline: JSON.parse(result)});
+        } catch(err) {
+            self.postMessage({type:'fail', msg: err.toString()});
+        }
+    }
+};
+
+boot().catch(err => self.postMessage({type:'fail', msg: err.toString()}));
+`;
+
+function initPyodideWorker(){
+    try {
+        const blob = new Blob([PY_WORKER_SRC], {type:'application/javascript'});
+        const url  = URL.createObjectURL(blob);
+        pyWorker   = new Worker(url);
+        URL.revokeObjectURL(url);
+        pyWorker.onmessage = function(e){
+            if(e.data.type==='ready'){
+                pyReady=true;
+                console.log('[Pyodide] ready');
+                // Update wordmark subtly
+                const wm=document.querySelector('#wordmark span');
+                if(wm) wm.textContent=wm.textContent.replace('v40','v41');
+            } else if(e.data.type==='status'){
+                console.log('[Pyodide]',e.data.msg);
+                if(_analyzeResolve) setStatus('Analysing…',e.data.msg);
+            } else if(e.data.type==='done'){
+                if(_analyzeResolve){ _analyzeResolve(e.data.timeline); _analyzeResolve=null; _analyzeReject=null; }
+            } else if(e.data.type==='fail'){
+                console.error('[Pyodide] fail:',e.data.msg);
+                if(_analyzeReject){ _analyzeReject(new Error(e.data.msg)); _analyzeResolve=null; _analyzeReject=null; }
+            }
+        };
+        pyWorker.onerror = function(e){
+            console.error('[Pyodide] worker error:',e.message);
+            pyWorker=null;
+            if(_analyzeReject){ _analyzeReject(new Error(e.message)); _analyzeResolve=null; _analyzeReject=null; }
+        };
+    } catch(err){
+        console.warn('[Pyodide] could not create worker:',err.message);
+        pyWorker=null;
+    }
+}
 const voteBuffer=[];
 const VOTE_N=16;  // ~0.27s at 60fps — decay makes this responsive
 const MIN_VOTE_FRAC=0.40;  // 40% majority to change
@@ -554,6 +770,8 @@ async function init(){
         document.getElementById('ui').style.opacity='1';
         document.getElementById('diag-btn').style.display='block';
         requestAnimationFrame(loop);
+        // Start Pyodide in background — ready by the time user picks a file
+        initPyodideWorker();
     }catch(err){
         const el=document.getElementById('error-msg');
         el.style.display='block';
@@ -617,155 +835,38 @@ function updateRecBtn(){
 }
 
 // ── File ─────────────────────────────────────────────────────────
-// ── Offline pre-analysis ─────────────────────────────────────────
-// Real FFT on BiquadFilter-rendered audio. Direct port of Python pipeline.
-
-function realFFTMag(signal){
-    const N = signal.length;
-    let n = 1; while(n < N) n <<= 1;
-    const re = new Float64Array(n), im = new Float64Array(n);
-    for(let i=0;i<N;i++) re[i]=signal[i];
-    for(let len=2;len<=n;len<<=1){
-        const ang=-2*Math.PI/len, wre=Math.cos(ang), wim=Math.sin(ang);
-        for(let i=0;i<n;i+=len){
-            let cr=1,ci=0;
-            for(let j=0;j<len/2;j++){
-                const ur=re[i+j],ui=im[i+j];
-                const vr=re[i+j+len/2]*cr-im[i+j+len/2]*ci;
-                const vi=re[i+j+len/2]*ci+im[i+j+len/2]*cr;
-                re[i+j]=ur+vr;im[i+j]=ui+vi;
-                re[i+j+len/2]=ur-vr;im[i+j+len/2]=ui-vi;
-                const tmp=cr*wre-ci*wim;ci=cr*wim+ci*wre;cr=tmp;
-            }
-        }
-    }
-    const mag=new Float32Array(n/2+1);
-    for(let i=0;i<=n/2;i++) mag[i]=Math.sqrt(re[i]*re[i]+im[i]*im[i]);
-    return {mag,n};
-}
+// ── Offline pre-analysis via Pyodide Web Worker ──────────────────
+// Runs exact Python filtfilt + rfft + KK pipeline in background Worker.
+// Zero-phase filtering (filtfilt) matches analyse.py; no causal distortion.
 
 async function analyzeFile(audioBuffer){
-    const sr=audioBuffer.sampleRate;
-    const ch0=audioBuffer.getChannelData(0);
-    const ch1=audioBuffer.numberOfChannels>1?audioBuffer.getChannelData(1):ch0;
-    const mono=new Float32Array(ch0.length);
+    const sr  = audioBuffer.sampleRate;
+    const ch0 = audioBuffer.getChannelData(0);
+    const ch1 = audioBuffer.numberOfChannels>1 ? audioBuffer.getChannelData(1) : ch0;
+    const mono = new Float32Array(ch0.length);
     for(let i=0;i<mono.length;i++) mono[i]=(ch0[i]+ch1[i])*0.5;
 
-    // BiquadFilter bandpass via OfflineAudioContext — same as scipy butter
-    async function bp(signal,lo,hi){
-        const ctx=new OfflineAudioContext(1,signal.length,sr);
-        const buf=ctx.createBuffer(1,signal.length,sr);
-        buf.getChannelData(0).set(signal);
-        const src=ctx.createBufferSource(); src.buffer=buf;
-        const hp=ctx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=lo; hp.Q.value=0.707;
-        const lp=ctx.createBiquadFilter(); lp.type='lowpass';  lp.frequency.value=hi; lp.Q.value=0.707;
-        src.connect(hp); hp.connect(lp); lp.connect(ctx.destination);
-        src.start(0);
-        const out=await ctx.startRendering();
-        return out.getChannelData(0);
+    // Wait for Pyodide to finish loading (it started in the background at init())
+    if(pyWorker && !pyReady){
+        setStatus('Analysing…','waiting for Python runtime to load…');
+        await new Promise((res,rej)=>{
+            const t0=Date.now();
+            const poll=setInterval(()=>{
+                if(pyReady){clearInterval(poll);res();}
+                else if(!pyWorker||Date.now()-t0>120000){clearInterval(poll);rej(new Error('Pyodide timeout'));}
+            },300);
+        });
     }
 
-    console.log('Filtering...');
-    const full=await bp(mono,82,500);
-    const bass=await bp(mono,82,200);
-    console.log(`Filtered. full rms=${Math.sqrt(full.reduce((a,b)=>a+b*b,0)/full.length).toFixed(4)}`);
+    if(!pyWorker || !pyReady) throw new Error('Pyodide not available');
 
-    const WIN=Math.floor(2.0*sr), HOP=Math.floor(0.5*sr);
-
-    function chroma(sig,start,maxHz){
-        const seg=sig.slice(start,start+WIN);
-        const w=new Float32Array(WIN);
-        for(let i=0;i<WIN;i++) w[i]=seg[i]*(0.5-0.5*Math.cos(2*Math.PI*i/WIN));
-        const {mag,n}=realFFTMag(w);
-        const ch=new Float32Array(12);
-        for(let k=1;k<mag.length;k++){
-            const hz=k*sr/n;
-            if(hz<82||hz>maxHz) continue;
-            ch[((Math.round(69+12*Math.log2(hz/440))%12)+12)%12]+=mag[k];
-        }
-        return ch;
-    }
-
-    // Key detection
-    const KK_MAJ=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
-    const KK_MIN=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
-    const kch=new Float32Array(12);
-    for(let s=0;s+WIN<full.length;s+=Math.floor(4*sr)){
-        const c=chroma(full,s,500); for(let i=0;i<12;i++) kch[i]+=c[i];
-    }
-    let kt=0; for(let i=0;i<12;i++) kt+=kch[i];
-    const kn=Array.from(kch).map(x=>x/(kt+1e-8));
-    const mc=kn.reduce((a,b)=>a+b,0)/12;
-    let bestKS=-Infinity,detKey=0,detMode='maj';
-    for(let r=0;r<12;r++) for(const [mode,prof] of [['maj',KK_MAJ],['min',KK_MIN]]){
-        const pv=Array.from({length:12},(_,i)=>prof[(i-r+12)%12]);
-        const mp=pv.reduce((a,b)=>a+b,0)/12;
-        let n=0,dc=0,dp=0;
-        for(let i=0;i<12;i++){const a=kn[i]-mc,b=pv[i]-mp;n+=a*b;dc+=a*a;dp+=b*b;}
-        const cor=n/Math.sqrt(dc*dp+1e-10);
-        if(cor>bestKS){bestKS=cor;detKey=r;detMode=mode;}
-    }
-    console.log(`Key: ${NOTES[detKey]} ${detMode} (${bestKS.toFixed(3)})`);
-    detectedKey=detKey; detectedMode=detMode;
-    diatonicSet=buildDiatonicSet(detKey,detMode); keyLocked=true;
-
-    // Diatonic search set
-    const MAJ_SCALE=[0,2,4,5,7,9,11],MIN_SCALE=[0,2,3,5,7,8,10];
-    const MAJ_Q=['maj','min','min','maj','maj','min','dim'];
-    const MIN_Q=['min','dim','maj','min','min','maj','maj'];
-    const scale=detMode==='maj'?MAJ_SCALE:MIN_SCALE;
-    const quals=detMode==='maj'?MAJ_Q:MIN_Q;
-    const seen=new Set(),search=[];
-    const addC=(root,type)=>{const k=root+'_'+type;if(!seen.has(k)){seen.add(k);search.push({root,type});}};
-    for(let i=0;i<scale.length;i++){
-        const root=(detKey+scale[i])%12,q=quals[i];
-        addC(root,q);
-        if(q==='maj')addC(root,'maj7');
-        if(q==='min')addC(root,'min7');
-        if(q==='dim'){addC(root,'m7b5');addC(root,'dim7');}
-        if(i===4)addC(root,'dom7');
-    }
-    for(let i=0;i<scale.length;i++){const t=(detKey+scale[i])%12;addC((t+7)%12,'dom7');addC((t+7)%12,'maj');}
-    const bScale=detMode==='maj'?MIN_SCALE:MAJ_SCALE,bQuals=detMode==='maj'?MIN_Q:MAJ_Q;
-    for(let i=0;i<6;i++){const root=(detKey+bScale[i])%12,q=bQuals[i];addC(root,q);if(q==='maj')addC(root,'dom7');if(q==='min')addC(root,'min7');}
-
-    // Analyse windows
-    console.log('Analysing chords...');
-    const raw=[];
-    for(let start=0;start+WIN<full.length;start+=HOP){
-        const cf=chroma(full,start,500),cb=chroma(bass,start,200);
-        let ct=0,bt=0; for(let i=0;i<12;i++){ct+=cf[i];bt+=cb[i];}
-        if(ct<1e-8){raw.push(null);continue;}
-        const cfn=Array.from(cf).map(x=>x/(ct+1e-8));
-        const cbn=Array.from(cb).map(x=>x/(bt+1e-8));
-        if(Math.max(...cfn)<0.08){raw.push(null);continue;}
-        let br=0,bc=0; for(let i=0;i<12;i++) if(cbn[i]>bc){bc=cbn[i];br=i;}
-        let bestS=-Infinity,bestR=0,bestT='maj';
-        for(const {root:r,type:t} of search){
-            const tmpl=CHORD_TMPL[t]; if(!tmpl) continue;
-            let score=0;
-            for(let i=0;i<12;i++) score+=cfn[(i+r)%12]*(tmpl[i]?2.5:-0.8);
-            if(r===br) score+=bc*8.0;
-            if(score>bestS){bestS=score;bestR=r;bestT=t;}
-        }
-        raw.push(NOTES[bestR]+(CHORD_SFX[bestT]||''));
-    }
-
-    // Smooth + deduplicate
-    const smoothed=raw.map((c,i)=>{
-        const win=raw.slice(Math.max(0,i-2),i+3).filter(Boolean);
-        if(!win.length) return c;
-        const counts={};
-        for(const w of win) counts[w]=(counts[w]||0)+1;
-        return Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0];
+    return new Promise((resolve,reject)=>{
+        _analyzeResolve=resolve;
+        _analyzeReject=reject;
+        // Slice a fresh ArrayBuffer copy (transferable, zero-copy across worker boundary)
+        const bufCopy = mono.buffer.slice(mono.byteOffset, mono.byteOffset + mono.byteLength);
+        pyWorker.postMessage({type:'analyze', buffer:bufCopy, sr, pyCode:PYTHON_ANALYSIS}, [bufCopy]);
     });
-    const tl=[]; let prev=null;
-    for(let i=0;i<smoothed.length;i++){
-        const chord=smoothed[i];
-        if(chord&&chord!==prev){tl.push({t:parseFloat((i*HOP/sr).toFixed(1)),chord});prev=chord;}
-    }
-    console.log(`Timeline: ${tl.length} changes`,tl);
-    return tl;
 }
 
 async function loadFile(e){
@@ -778,9 +879,19 @@ async function loadFile(e){
     fileBuffer=await audioCtx.decodeAudioData(await f.arrayBuffer());
     fileDuration=fileBuffer.duration; fileOffset=0;
     inputMode='file';
-    // Pre-analyze chords offline — much more accurate than real-time
-    setStatus('Analyzing chords…','please wait');
-    chordTimeline=await analyzeFile(fileBuffer, f.name);
+    // Pre-analyze chords offline via Pyodide worker
+    if(pyWorker){
+        setStatus('Analysing chords…', pyReady ? 'running Python analysis…' : 'loading Python runtime (~20s first time)…');
+    } else {
+        setStatus('Analysing chords…','please wait');
+    }
+    try {
+        chordTimeline=await analyzeFile(fileBuffer, f.name);
+        console.log('SUCCESS: timeline has',chordTimeline.length,'changes',chordTimeline);
+    } catch(e) {
+        console.error('analyzeFile FAILED:',e.message);
+        chordTimeline=[];
+    }
     setStatus('','');
     document.getElementById('btn-mic').classList.remove('active');
     document.getElementById('btn-file').classList.add('active');
