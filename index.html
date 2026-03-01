@@ -38,7 +38,7 @@
         #status-text{font-size:15px;font-weight:300;letter-spacing:0.25em;text-transform:uppercase;color:rgba(255,255,255,0.45);}
         #status-sub{font-size:11px;font-family:'JetBrains Mono',monospace;color:rgba(255,255,255,0.28);margin-top:8px;letter-spacing:0.1em;}
         #ana-bar{width:220px;height:2px;background:rgba(255,255,255,0.12);border-radius:2px;margin:16px auto 0;display:none;}
-        #ana-fill{height:100%;width:0%;background:rgba(255,255,255,0.6);border-radius:2px;transition:width 0.5s ease;}
+        #ana-fill{height:100%;width:0%;background:rgba(255,255,255,0.6);border-radius:2px;transition:width 0.4s ease;}
         #bottom-bar{padding:0 36px 22px;display:flex;justify-content:space-between;align-items:flex-end;pointer-events:none;}
         #pitch-display{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:300;letter-spacing:0.07em;color:rgba(255,255,255,0.55);line-height:2.2;}
         #legend{font-size:10px;font-family:'JetBrains Mono',monospace;color:rgba(255,255,255,0.38);text-align:right;line-height:2;letter-spacing:0.05em;}
@@ -66,7 +66,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v47</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v48</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -201,331 +201,235 @@ const bassBuf = Array.from({length:HARM_WIN},()=>new Float32Array(12));
 let currentChord={hue:HUE_WARM,sat:0.6,val:0.5,label:''};
 let chordTimeline=[];
 
-// ── Chord Analysis Worker — Neural + Signal Processing fallback ───
-// MODE 1 (preferred): TF.js + MTG chord CNN — Moises-level accuracy
-//   Model hosted in the repo at /models/ to avoid CORS issues
-//   URL: https://cdn.jsdelivr.net/gh/gatherandre/see-harmony@main/models/
-//        chord_recognition_ambiguous-1/model.json
-// MODE 2 (fallback): Improved signal processing
-//   Runs when neural model is unavailable
-//   Fixes vs previous versions:
-//     - Bass range 55-180 Hz (captures C2=65Hz, excludes guitar G3=196Hz)
-//     - Gmaj7 excluded from C major search set (it contains F#, non-diatonic)
-//     - 22050 Hz analysis rate
+// ── Pyodide Web Worker ────────────────────────────────────────────
+// Audio is resampled to 22050 Hz in JS before transfer.
+// Python runs identical logic to the validated analyse.py script.
+// Two fixes vs earlier versions:
+//   FIX 1: bass range 55–180 Hz (captures C2=65Hz, excludes guitar G3=196Hz)
+//   FIX 2: no maj7 on scale degree V (Gmaj7 is non-diatonic in C major)
 
-let anaWorker=null, anaReady=false;
-let _anaResolve=null, _anaReject=null;
+let pyWorker=null, pyReady=false;
+let _pyResolve=null, _pyReject=null;
 
-const WORKER_SRC=`
-importScripts('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
+const PY_STAGE1=`
+import numpy as np
+from scipy.signal import butter, filtfilt
+from collections import Counter
+import json
 
-// ── Neural model config ──────────────────────────────────────────
-// Hosted in the repo via jsDelivr CDN (CORS-friendly)
-const MODEL_URL='https://cdn.jsdelivr.net/gh/gatherandre/see-harmony@main/models/chord_recognition_ambiguous-1/model.json';
-// 25 classes: N + 12 major + 12 minor
-const CLASSES=['N','C','C#','D','D#','E','F','F#','G','G#','A','A#','B',
-               'Cm','C#m','Dm','D#m','Em','Fm','F#m','Gm','G#m','Am','A#m','Bm'];
-const NOTES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+audio = np.frombuffer(bytes(_abytes.to_py()), dtype='<f4').copy()
+sr    = int(_sr)
 
-// ── Mel spectrogram constants (match MTG training) ───────────────
-const SR_NN=16000, N_FFT=512, HOP=256, N_MELS=96, F_MIN=27.5, F_MAX=8000;
-const PATCH=128;
+def bp(d, lo, hi):
+    b, a = butter(4, [lo/(sr/2), hi/(sr/2)], btype='band')
+    return filtfilt(b, a, d)
 
-// ── Signal processing constants (fallback, 22050 Hz) ─────────────
-const SR_SP=22050;
-const WIN_SP=int(2.0*SR_SP), HOP_SP=int(0.5*SR_SP);
-function int(x){return Math.floor(x);}
+_full = bp(audio, 82, 500)
+_bass = bp(audio, 55, 180)
+'ok'
+`;
 
-const KK_MAJ=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
-const KK_MIN=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
+const PY_STAGE2=`
+WIN  = int(2.0 * sr)
+HOP  = int(0.5 * sr)
+hann = np.hanning(WIN)
 
-const CHORD_TMPL={
-    maj:[1,0,0,0,1,0,0,1,0,0,0,0], min:[1,0,0,1,0,0,0,1,0,0,0,0],
-    maj7:[1,0,0,0,1,0,0,1,0,0,0,1], min7:[1,0,0,1,0,0,0,1,0,0,1,0],
-    dom7:[1,0,0,0,1,0,0,1,0,0,1,0], dim:[1,0,0,1,0,0,1,0,0,0,0,0],
-    dim7:[1,0,0,1,0,0,1,0,0,1,0,0], m7b5:[1,0,0,1,0,0,1,0,0,0,1,0],
-};
-const CHORD_SFX={maj:'',min:'m',maj7:'maj7',min7:'m7',dom7:'7',dim:'dim',dim7:'dim7',m7b5:'m7b5'};
+KK_MAJ = np.array([6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88])
+KK_MIN = np.array([6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17])
+NOTES  = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
 
-let model=null;
+def get_chroma(sig, start, max_hz):
+    seg = sig[start:start+WIN]
+    if len(seg) < WIN:
+        seg = np.pad(seg, (0, WIN-len(seg)))
+    mag   = np.abs(np.fft.rfft(seg * hann))
+    freqs = np.fft.rfftfreq(WIN, 1.0/sr)
+    ch    = np.zeros(12)
+    mask  = (freqs >= 82) & (freqs <= max_hz)
+    pcs   = (np.round(69 + 12*np.log2(np.maximum(freqs[mask],1e-9)/440)).astype(int)) % 12
+    np.add.at(ch, pcs, mag[mask])
+    return ch
 
-// ── Mel filterbank (built once) ───────────────────────────────────
-function buildMelFB(){
-    const hz2mel=f=>2595*Math.log10(1+f/700);
-    const mel2hz=m=>700*(Math.pow(10,m/2595)-1);
-    const lo=hz2mel(F_MIN), hi=hz2mel(F_MAX);
-    const pts=Array.from({length:N_MELS+2},(_,i)=>mel2hz(lo+i*(hi-lo)/(N_MELS+1)));
-    const bins=pts.map(f=>Math.floor((N_FFT+1)*f/SR_NN));
-    const fb=Array.from({length:N_MELS},()=>new Float32Array(N_FFT/2+1));
-    for(let m=1;m<=N_MELS;m++){
-        for(let k=bins[m-1];k<bins[m];k++) if(k<N_FFT/2+1) fb[m-1][k]=(k-bins[m-1])/(bins[m]-bins[m-1]);
-        for(let k=bins[m];k<bins[m+1];k++) if(k<N_FFT/2+1) fb[m-1][k]=(bins[m+1]-k)/(bins[m+1]-bins[m]);
-    }
-    return fb;
+# Key detection — sample every 1s for dense coverage
+kch  = np.zeros(12)
+step = max(int(1.0*sr), 1)
+for s in range(0, len(_full)-WIN, step):
+    kch += get_chroma(_full, s, 500)
+kn = kch / (kch.sum()+1e-8); mc = kn.mean()
+
+best_ks=-np.inf; det_key=0; det_mode='maj'
+for r in range(12):
+    for mode, prof in [('maj', KK_MAJ), ('min', KK_MIN)]:
+        pv = np.roll(prof, r); mp = pv.mean()
+        a  = kn - mc;          b  = pv - mp
+        cor = np.dot(a,b) / (np.sqrt(np.dot(a,a)*np.dot(b,b))+1e-10)
+        if cor > best_ks: best_ks=cor; det_key=r; det_mode=mode
+
+MAJ_SCALE=[0,2,4,5,7,9,11]; MIN_SCALE=[0,2,3,5,7,8,10]
+MAJ_Q=['maj','min','min','maj','maj','min','dim']
+MIN_Q=['min','dim','maj','min','min','maj','maj']
+scale = MAJ_SCALE if det_mode=='maj' else MIN_SCALE
+quals = MAJ_Q    if det_mode=='maj' else MIN_Q
+
+CHORD_TMPL = {
+    'maj':    [1,0,0,0,1,0,0,1,0,0,0,0],
+    'min':    [1,0,0,1,0,0,0,1,0,0,0,0],
+    'dim':    [1,0,0,1,0,0,1,0,0,0,0,0],
+    'aug':    [1,0,0,0,1,0,0,0,1,0,0,0],
+    'maj7':   [1,0,0,0,1,0,0,1,0,0,0,1],
+    'min7':   [1,0,0,1,0,0,0,1,0,0,1,0],
+    'dom7':   [1,0,0,0,1,0,0,1,0,0,1,0],
+    'dim7':   [1,0,0,1,0,0,1,0,0,1,0,0],
+    'm7b5':   [1,0,0,1,0,0,1,0,0,0,1,0],
+    'minmaj7':[1,0,0,1,0,0,0,1,0,0,0,1],
 }
-const MEL_FB=buildMelFB();
-const HANN_NN=Float32Array.from({length:N_FFT},(_,i)=>0.5-0.5*Math.cos(2*Math.PI*i/N_FFT));
-const HANN_SP=Float32Array.from({length:WIN_SP},(_,i)=>0.5-0.5*Math.cos(2*Math.PI*i/WIN_SP));
-
-// ── FFT (Cooley-Tukey, power output) ─────────────────────────────
-function fft_power(frame, win){
-    const n=win.length;
-    const re=new Float64Array(n), im=new Float64Array(n);
-    for(let i=0;i<n&&i<frame.length;i++) re[i]=frame[i]*win[i];
-    for(let len=2;len<=n;len<<=1){
-        const ang=-2*Math.PI/len, wR=Math.cos(ang), wI=Math.sin(ang);
-        for(let i=0;i<n;i+=len){
-            let cR=1,cI=0;
-            for(let j=0;j<(len>>1);j++){
-                const uR=re[i+j],uI=im[i+j];
-                const vR=re[i+j+(len>>1)]*cR-im[i+j+(len>>1)]*cI;
-                const vI=re[i+j+(len>>1)]*cI+im[i+j+(len>>1)]*cR;
-                re[i+j]=uR+vR; im[i+j]=uI+vI;
-                re[i+j+(len>>1)]=uR-vR; im[i+j+(len>>1)]=uI-vI;
-                const t=cR*wR-cI*wI; cI=cR*wI+cI*wR; cR=t;
-            }
-        }
-    }
-    const ps=new Float32Array(n/2+1);
-    for(let i=0;i<=n/2;i++) ps[i]=re[i]*re[i]+im[i]*im[i];
-    return ps;
+CHORD_SFX = {
+    'maj':'','min':'m','dim':'dim','aug':'aug',
+    'maj7':'maj7','min7':'m7','dom7':'7',
+    'dim7':'dim7','m7b5':'m7b5','minmaj7':'mM7'
 }
 
-// ── KK key detection ──────────────────────────────────────────────
-function detectKey(acc12){
-    const tot=acc12.reduce((a,b)=>a+b,0)||1;
-    const kn=acc12.map(x=>x/tot), mc=kn.reduce((a,b)=>a+b,0)/12;
-    let best=-Infinity,key=0,mode='maj';
-    for(let r=0;r<12;r++) for(const [m,p] of [['maj',KK_MAJ],['min',KK_MIN]]){
-        const pv=Array.from({length:12},(_,i)=>p[(i-r+12)%12]), mp=pv.reduce((a,b)=>a+b,0)/12;
-        let n=0,dc=0,dp=0;
-        for(let i=0;i<12;i++){const a=kn[i]-mc,b=pv[i]-mp;n+=a*b;dc+=a*a;dp+=b*b;}
-        const c=n/Math.sqrt(dc*dp+1e-10);
-        if(c>best){best=c;key=r;mode=m;}
-    }
-    return {key,mode};
-}
+seen=set(); search=[]
+def add_c(root, t):
+    k=(root,t)
+    if k not in seen: seen.add(k); search.append(k)
 
-// ── NEURAL PATH ───────────────────────────────────────────────────
-function melSpectrogram(audio){
-    const nF=Math.floor((audio.length-N_FFT)/HOP)+1;
-    const mel=Array.from({length:N_MELS},()=>new Float32Array(nF));
-    const keyAcc=new Float32Array(12);
-    for(let fi=0;fi<nF;fi++){
-        const ps=fft_power(audio.subarray(fi*HOP,fi*HOP+N_FFT), HANN_NN);
-        for(let m=0;m<N_MELS;m++){
-            let s=0; for(let k=0;k<ps.length;k++) s+=MEL_FB[m][k]*ps[k];
-            mel[m][fi]=Math.log10(Math.max(s,1e-10));
-        }
-        // Accumulate raw chroma for key detection
-        const sr=SR_NN, freqs=Array.from({length:N_FFT/2+1},(_,k)=>k*sr/N_FFT);
-        for(let k=1;k<freqs.length;k++){
-            const f=freqs[k]; if(f<82||f>500) continue;
-            const pc=((Math.round(69+12*Math.log2(f/440))%12)+12)%12;
-            keyAcc[pc]+=Math.sqrt(ps[k]);
-        }
-    }
-    return {mel,nF,keyAcc};
-}
+for i,sd in enumerate(scale):
+    root=(det_key+sd)%12; q=quals[i]
+    add_c(root,q)
+    if q=='maj' and i!=4: add_c(root,'maj7')  # FIX 2: no maj7 on V chord
+    if q=='min': add_c(root,'min7')
+    if q=='dim': add_c(root,'m7b5'); add_c(root,'dim7')
+    if i==4: add_c(root,'dom7')
+for i,sd in enumerate(scale):
+    t2=(det_key+sd)%12
+    add_c((t2+7)%12,'dom7'); add_c((t2+7)%12,'maj')
+b_scale=MIN_SCALE if det_mode=='maj' else MAJ_SCALE
+b_quals=MIN_Q    if det_mode=='maj' else MAJ_Q
+for i in range(6):
+    root=(det_key+b_scale[i])%12; q=b_quals[i]
+    add_c(root,q)
+    if q=='maj': add_c(root,'dom7')
+    if q=='min': add_c(root,'min7')
 
-async function runNeural(audio){
-    const {mel,nF,keyAcc}=melSpectrogram(audio);
-    const {key,mode}=detectKey(Array.from(keyAcc));
-    const raw=new Array(nF).fill(null);
-    const STRIDE=Math.floor(PATCH/2);
-    for(let s=0;s<nF;s+=STRIDE){
-        const patch=new Float32Array(N_MELS*PATCH);
-        let pMin=Infinity, pMax=-Infinity;
-        for(let m=0;m<N_MELS;m++) for(let fi=0;fi<PATCH;fi++){
-            const v=mel[m][Math.min(s+fi,nF-1)];
-            patch[m*PATCH+fi]=v;
-            if(v<pMin)pMin=v; if(v>pMax)pMax=v;
-        }
-        const rng=pMax-pMin||1;
-        for(let i=0;i<patch.length;i++) patch[i]=(patch[i]-pMin)/rng;
-        const inp=tf.tensor4d(patch,[1,N_MELS,PATCH,1]);
-        const out=await model.predict(inp).data();
-        inp.dispose();
-        const outLen=out.length;
-        if(outLen===25){
-            let b=0; for(let c=1;c<25;c++) if(out[c]>out[b]) b=c;
-            for(let fi=s;fi<Math.min(s+PATCH,nF);fi++) raw[fi]=CLASSES[b];
-        } else {
-            const frames=Math.floor(outLen/25);
-            for(let fi=0;fi<frames&&s+fi<nF;fi++){
-                const off=fi*25; let b=0;
-                for(let c=1;c<25;c++) if(out[off+c]>out[off+b]) b=c;
-                if(raw[s+fi]===null) raw[s+fi]=CLASSES[b];
-            }
-        }
-        self.postMessage({type:'progress',pct:40+Math.round(40*s/nF),msg:'Neural inference… '+Math.round(100*s/nF)+'%'});
-    }
-    return {raw,key,mode,hop:HOP,sr:SR_NN};
-}
+NOTES[det_key] + (' min' if det_mode=='min' else '')
+`;
 
-// ── SIGNAL PROCESSING FALLBACK (22050 Hz, improved) ───────────────
-function getChroma(audio, start, winLen, loHz, hiHz, sr){
-    const ps=fft_power(audio.subarray(start,start+winLen), HANN_SP);
-    const ch=new Float32Array(12);
-    for(let k=1;k<ps.length;k++){
-        const f=k*sr/winLen; if(f<loHz||f>hiHz) continue;
-        ch[((Math.round(69+12*Math.log2(f/440))%12)+12)%12]+=Math.sqrt(ps[k]);
-    }
-    return ch;
-}
+const PY_STAGE3=`
+pos_w=2.5; neg_w=-0.8
+n_wins=(len(_full)-WIN)//HOP
+raw=[]
+for wi in range(n_wins):
+    start=wi*HOP
+    cf=get_chroma(_full,start,500); cb=get_chroma(_bass,start,180)
+    ct=cf.sum(); bt=cb.sum()
+    if ct<1e-8: raw.append(None); continue
+    cfn=cf/(ct+1e-8); cbn=cb/(bt+1e-8)
+    if cfn.max()<0.08: raw.append(None); continue
+    br=int(np.argmax(cbn)); bc=float(cbn[br])
+    best_s=-np.inf; best_r=0; best_t='maj'
+    for r,t2 in search:
+        tmpl=np.array(CHORD_TMPL[t2],dtype=float)
+        roll_idx=(np.arange(12)+r)%12
+        score=float(np.dot(cfn[roll_idx], np.where(tmpl,pos_w,neg_w)))
+        if r==br: score+=bc*8.0
+        if score>best_s: best_s=score; best_r=r; best_t=t2
+    raw.append(NOTES[best_r]+CHORD_SFX[best_t])
+str(len(raw))
+`;
 
-function runSP(audio, sr){
-    // Key detection
-    const keyAcc=new Float32Array(12);
-    for(let s=0;s+WIN_SP<audio.length;s+=int(1.0*sr)){
-        const c=getChroma(audio,s,WIN_SP,82,500,sr);
-        for(let i=0;i<12;i++) keyAcc[i]+=c[i];
-    }
-    const {key,mode}=detectKey(Array.from(keyAcc));
+const PY_STAGE4=`
+# 5-frame median smooth — EXACT match to analyse.py
+smoothed=[]
+for i,c in enumerate(raw):
+    w=[x for x in raw[max(0,i-2):i+3] if x is not None]
+    smoothed.append(Counter(w).most_common(1)[0][0] if w else c)
 
-    // Build diatonic search set — FIX: no maj7 on V chord
-    const MAJ_SCALE=[0,2,4,5,7,9,11], MIN_SCALE=[0,2,3,5,7,8,10];
-    const MAJ_Q=['maj','min','min','maj','maj','min','dim'];
-    const MIN_Q=['min','dim','maj','min','min','maj','maj'];
-    const scale=mode==='maj'?MAJ_SCALE:MIN_SCALE;
-    const quals=mode==='maj'?MAJ_Q:MIN_Q;
-    const seen=new Set(), search=[];
-    const add=(r,t)=>{const k=r+'_'+t;if(!seen.has(k)){seen.add(k);search.push([r,t]);}};
-    for(let i=0;i<scale.length;i++){
-        const root=(key+scale[i])%12, q=quals[i];
-        add(root,q);
-        if(q==='maj'&&i!==4) add(root,'maj7'); // FIX: skip Vmaj7 (non-diatonic)
-        if(q==='min') add(root,'min7');
-        if(q==='dim'){add(root,'m7b5');add(root,'dim7');}
-        if(i===4) add(root,'dom7');
-    }
-    for(let i=0;i<scale.length;i++){const t=(key+scale[i])%12;add((t+7)%12,'dom7');}
-    const bS=mode==='maj'?MIN_SCALE:MAJ_SCALE, bQ=mode==='maj'?MIN_Q:MAJ_Q;
-    for(let i=0;i<6;i++){const r=(key+bS[i])%12,q=bQ[i];add(r,q);if(q==='maj')add(r,'dom7');if(q==='min')add(r,'min7');}
+# Deduplicate into timeline
+tl=[]; prev=None
+for i,chord in enumerate(smoothed):
+    if chord and chord!=prev:
+        tl.append({'t':round(i*HOP/sr,1),'chord':chord}); prev=chord
 
-    const nWins=Math.floor((audio.length-WIN_SP)/HOP_SP);
-    const raw=[];
-    for(let wi=0;wi<nWins;wi++){
-        const s=wi*HOP_SP;
-        const cf=getChroma(audio,s,WIN_SP,82,500,sr);
-        // FIX: bass range 55-180Hz captures actual bass guitar, not guitar open strings
-        const cb=getChroma(audio,s,WIN_SP,55,180,sr);
-        const ct=cf.reduce((a,b)=>a+b,0), bt=cb.reduce((a,b)=>a+b,0);
-        if(ct<1e-8){raw.push(null);continue;}
-        const cfn=cf.map(x=>x/(ct+1e-8)), cbn=cb.map(x=>x/(bt+1e-8));
-        if(Math.max(...cfn)<0.08){raw.push(null);continue;}
-        let br=0,bc=0; for(let i=0;i<12;i++) if(cbn[i]>bc){bc=cbn[i];br=i;}
-        let bestS=-Infinity,bestR=0,bestT='maj';
-        for(const [r,t] of search){
-            const tmpl=CHORD_TMPL[t]; if(!tmpl) continue;
-            let score=0;
-            for(let i=0;i<12;i++) score+=cfn[(i+r)%12]*(tmpl[i]?2.5:-0.8);
-            if(r===br) score+=bc*8.0;
-            if(score>bestS){bestS=score;bestR=r;bestT=t;}
-        }
-        raw.push(NOTES[bestR]+(CHORD_SFX[bestT]||''));
-        if(wi%50===0) self.postMessage({type:'progress',pct:30+Math.round(50*wi/nWins),msg:'Scoring chords… '+Math.round(100*wi/nWins)+'%'});
-    }
-    return {raw,key,mode,hop:HOP_SP,sr};
-}
+key_label=NOTES[det_key]+(' min' if det_mode=='min' else '')
+json.dumps({'key':key_label,'timeline':tl})
+`;
 
-// ── Smooth + build timeline ───────────────────────────────────────
-function buildTimeline(raw, hop, sr){
-    const sm=raw.map((c,i)=>{
-        const w=raw.slice(Math.max(0,i-2),i+3).filter(Boolean);
-        if(!w.length) return c;
-        const cnt={}; for(const x of w) cnt[x]=(cnt[x]||0)+1;
-        return Object.entries(cnt).sort((a,b)=>b[1]-a[1])[0][0];
-    });
-    const tl=[]; let prev=null;
-    for(let i=0;i<sm.length;i++){
-        const c=sm[i]; if(c&&c!=='N'&&c!==prev){
-            tl.push({t:parseFloat((i*hop/sr).toFixed(2)),chord:c}); prev=c;
-        }
-    }
-    return tl;
-}
+const PY_WORKER_SRC=`
+importScripts('https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js');
+let py=null;
 
-// ── Boot: load TF.js + try neural model ─────────────────────────
 async function boot(){
-    self.postMessage({type:'progress',pct:5,msg:'Loading TF.js\u2026'});
-    await tf.setBackend('cpu');
-    await tf.ready();
-    self.postMessage({type:'progress',pct:15,msg:'Loading neural chord model\u2026'});
-    try{
-        model=await tf.loadGraphModel(MODEL_URL);
-        console.log('[Worker] Neural model loaded. Inputs:',model.inputs.map(i=>i.shape));
-        self.postMessage({type:'ready',neural:true});
-    }catch(err){
-        console.warn('[Worker] Neural model unavailable ('+err.message+'), will use signal processing');
-        self.postMessage({type:'ready',neural:false,warn:err.message});
-    }
+    self.postMessage({type:'progress',pct:5,msg:'Loading Python runtime\u2026'});
+    py=await loadPyodide();
+    self.postMessage({type:'progress',pct:15,msg:'Loading numpy + scipy\u2026'});
+    await py.loadPackage(['numpy','scipy']);
+    self.postMessage({type:'ready'});
 }
 
 self.onmessage=async function(e){
     if(e.data.type!=='analyze') return;
     try{
-        const audio=new Float32Array(e.data.buffer);
-        const sr=e.data.sr;
-        let result;
-        if(model){
-            self.postMessage({type:'progress',pct:25,msg:'Computing mel spectrogram\u2026'});
-            result=await runNeural(audio);
-            console.log('[Worker] Neural inference complete');
-        }else{
-            self.postMessage({type:'progress',pct:22,msg:'Filtering audio (signal processing mode)\u2026'});
-            result=runSP(audio,sr);
-            console.log('[Worker] Signal processing complete');
-        }
-        self.postMessage({type:'progress',pct:88,msg:'Building timeline\u2026'});
-        const timeline=buildTimeline(result.raw, result.hop, result.sr);
-        const keyLabel=NOTES[result.key]+(result.mode==='min'?' min':'');
+        py.globals.set('_abytes', new Uint8Array(e.data.buffer));
+        py.globals.set('_sr', e.data.sr);
+
+        self.postMessage({type:'progress',pct:20,msg:'Filtering audio\u2026'});
+        py.runPython(e.data.s1);
+
+        self.postMessage({type:'progress',pct:45,msg:'Detecting key\u2026'});
+        const keyName=py.runPython(e.data.s2);
+
+        self.postMessage({type:'progress',pct:60,msg:'Scoring chords\u2026'});
+        py.runPython(e.data.s3);
+
+        self.postMessage({type:'progress',pct:88,msg:'Smoothing timeline\u2026'});
+        const raw=py.runPython(e.data.s4);
+        const result=JSON.parse(raw);
+
         self.postMessage({type:'progress',pct:100,msg:'Done'});
-        self.postMessage({type:'done',key:keyLabel,timeline,neural:!!model});
+        self.postMessage({type:'done',key:result.key,timeline:result.timeline});
     }catch(err){
-        self.postMessage({type:'fail',msg:err.toString()+'\\n'+err.stack});
+        self.postMessage({type:'fail',msg:err.toString()});
     }
 };
 
 boot().catch(err=>self.postMessage({type:'fail',msg:err.toString()}));
 `;
 
-function initAnaWorker(){
+function initPyodideWorker(){
     try{
-        const blob=new Blob([WORKER_SRC],{type:'application/javascript'});
-        anaWorker=new Worker(URL.createObjectURL(blob));
-        anaWorker.onmessage=function(e){
+        const blob=new Blob([PY_WORKER_SRC],{type:'application/javascript'});
+        pyWorker=new Worker(URL.createObjectURL(blob));
+        pyWorker.onmessage=function(e){
             if(e.data.type==='ready'){
-                anaReady=true;
-                if(e.data.neural) console.log('[ANA] Neural mode active ✓');
-                else console.log('[ANA] Signal processing mode (neural model unavailable)');
+                pyReady=true;
+                console.log('[Pyodide] ready ✓');
             }else if(e.data.type==='progress'){
-                console.log('[ANA]',e.data.pct+'%',e.data.msg);
-                if(_anaResolve){setStatus('Analysing\u2026',e.data.msg);setProgress(e.data.pct);}
+                console.log('[Pyodide]',e.data.pct+'%',e.data.msg);
+                if(_pyResolve){setStatus('Analysing\u2026',e.data.msg);setProgress(e.data.pct);}
             }else if(e.data.type==='done'){
-                if(_anaResolve){
+                if(_pyResolve){
                     setProgress(null);
-                    const mode=e.data.neural?'neural':'signal-processing';
-                    console.log('[ANA]',mode,'key:',e.data.key,'changes:',e.data.timeline.length);
-                    console.log('[ANA] first 10:',JSON.stringify(e.data.timeline.slice(0,10)));
-                    _anaResolve({key:e.data.key,timeline:e.data.timeline});
-                    _anaResolve=null; _anaReject=null;
+                    console.log('[Pyodide] key:',e.data.key,'changes:',e.data.timeline.length);
+                    console.log('[Pyodide] first 10:',JSON.stringify(e.data.timeline.slice(0,10)));
+                    _pyResolve({key:e.data.key,timeline:e.data.timeline});
+                    _pyResolve=null; _pyReject=null;
                 }
             }else if(e.data.type==='fail'){
-                console.error('[ANA] FAIL:',e.data.msg);
+                console.error('[Pyodide] FAIL:',e.data.msg);
                 setProgress(null);
-                if(_anaReject){_anaReject(new Error(e.data.msg));_anaResolve=null;_anaReject=null;}
+                if(_pyReject){_pyReject(new Error(e.data.msg));_pyResolve=null;_pyReject=null;}
             }
         };
-        anaWorker.onerror=function(err){
-            console.error('[ANA] worker error:',err.message);
+        pyWorker.onerror=function(e){
+            console.error('[Pyodide] worker error:',e.message);
             setProgress(null);
-            if(_anaReject){_anaReject(new Error(err.message));_anaResolve=null;_anaReject=null;}
-            anaWorker=null;
+            if(_pyReject){_pyReject(new Error(e.message));_pyResolve=null;_pyReject=null;}
+            pyWorker=null;
         };
     }catch(err){
-        console.warn('[ANA] worker init failed:',err.message);
-        anaWorker=null;
+        console.warn('[Pyodide] could not init worker:',err.message);
+        pyWorker=null;
     }
 }
 const voteBuffer=[];
@@ -885,7 +789,7 @@ async function init(){
         document.getElementById('ui').style.opacity='1';
         document.getElementById('diag-btn').style.display='block';
         requestAnimationFrame(loop);
-        initAnaWorker(); // warm up TF.js + neural model in background
+        initPyodideWorker(); // warm up Python in background
     }catch(err){
         const el=document.getElementById('error-msg');
         el.style.display='block';
@@ -948,13 +852,14 @@ function updateRecBtn(){
     recording?btn.classList.add('recording'):btn.classList.remove('recording');
 }
 
-// ── File analysis — main thread resamples, worker analyses ───────
-// Always resample to 22050 Hz. Worker internally downsamples to 16kHz
-// if the neural model loaded successfully.
+// ── File analysis — Pyodide worker ───────────────────────────────────
+// Resample to 22050 Hz in JS so Python always receives a consistent rate.
+// This is what proved correct on the server (Gmaj7→Cmaj7→Fmaj7 at right times).
 const ANALYSIS_SR = 22050;
 
 async function analyzeFile(audioBuffer) {
-    setStatus('Analysing\u2026', 'resampling audio\u2026'); setProgress(8);
+    // Resample to 22050 Hz mono
+    setStatus('Analysing…', 'resampling audio…'); setProgress(8);
     const nSamples = Math.ceil(audioBuffer.duration * ANALYSIS_SR);
     const offCtx = new OfflineAudioContext(1, nSamples, ANALYSIS_SR);
     const src = offCtx.createBufferSource(); src.buffer = audioBuffer;
@@ -962,22 +867,27 @@ async function analyzeFile(audioBuffer) {
     const resampled = await offCtx.startRendering();
     const mono = resampled.getChannelData(0);
 
-    if (anaWorker && !anaReady) {
-        setStatus('Analysing\u2026', 'loading analysis engine\u2026'); setProgress(12);
+    // Wait for Python runtime if not yet ready
+    if (pyWorker && !pyReady) {
+        setStatus('Analysing…', 'waiting for Python runtime…'); setProgress(12);
         await new Promise((res, rej) => {
-            const dl = Date.now() + 60000;
+            const deadline = Date.now() + 120000;
             const poll = setInterval(() => {
-                if (anaReady) { clearInterval(poll); res(); }
-                else if (!anaWorker || Date.now() > dl) { clearInterval(poll); rej(new Error('Worker timeout')); }
-            }, 200);
+                if (pyReady) { clearInterval(poll); res(); }
+                else if (!pyWorker || Date.now() > deadline) { clearInterval(poll); rej(new Error('Pyodide timeout')); }
+            }, 300);
         });
     }
-    if (!anaWorker || !anaReady) throw new Error('Analysis worker not available');
+    if (!pyWorker || !pyReady) throw new Error('Pyodide not available');
 
     return new Promise((resolve, reject) => {
-        _anaResolve = resolve; _anaReject = reject;
-        const buf = mono.buffer.slice(0);
-        anaWorker.postMessage({ type: 'analyze', buffer: buf, sr: ANALYSIS_SR }, [buf]);
+        _pyResolve = resolve; _pyReject = reject;
+        const buf = mono.buffer.slice(0); // transferable copy
+        pyWorker.postMessage(
+            { type: 'analyze', buffer: buf, sr: ANALYSIS_SR,
+              s1: PY_STAGE1, s2: PY_STAGE2, s3: PY_STAGE3, s4: PY_STAGE4 },
+            [buf]
+        );
     });
 }
 
@@ -987,33 +897,32 @@ async function loadFile(e) {
     if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
     stopFileInternal();
     if (audioCtx.state === 'suspended') await audioCtx.resume();
-    setStatus('Loading\u2026', 'decoding audio');
+    setStatus('Loading…', 'decoding audio');
     fileBuffer = await audioCtx.decodeAudioData(await f.arrayBuffer());
     fileDuration = fileBuffer.duration; fileOffset = 0;
     inputMode = 'file';
-    setStatus('Analysing chords\u2026', anaReady ? 'resampling audio\u2026' : 'loading analysis engine\u2026');
+    setStatus('Analysing…', pyReady ? 'resampling audio…' : 'loading Python runtime…');
     setProgress(5);
     try {
         const result = await analyzeFile(fileBuffer);
         chordTimeline = result.timeline || result;
         if (result.key) {
-            const kstr = result.key.replace(/ min$/, '').replace(/ maj$/, '').trim();
+            const kstr = result.key.replace(/ min$/, '').trim();
             const ki = NOTES.indexOf(kstr);
             if (ki >= 0) {
                 detectedKey = ki;
                 detectedMode = result.key.endsWith('min') ? 'min' : 'maj';
                 diatonicSet = buildDiatonicSet(detectedKey, detectedMode);
                 keyLocked = true;
+                console.log('[Key] locked:', result.key);
             }
         }
         console.log('SUCCESS: timeline has', chordTimeline.length, 'changes');
-        console.log('Key:', result.key, 'First 10:', JSON.stringify(chordTimeline.slice(0, 10)));
     } catch(err) {
         console.error('analyzeFile FAILED:', err.message);
         chordTimeline = [];
     }
-    setProgress(null);
-    setStatus('', '');
+    setProgress(null); setStatus('', '');
     document.getElementById('btn-mic').classList.remove('active');
     document.getElementById('btn-file').classList.add('active');
     document.getElementById('rec-btn').style.display = 'none';
@@ -1028,8 +937,6 @@ async function loadFile(e) {
     badge.style.borderColor = fileBuffer.numberOfChannels >= 2 ? 'rgba(120,200,255,0.35)' : 'rgba(255,255,255,0.15)';
     playFile();
 }
-
-
 function playFile(){
     if(!fileBuffer) return;
     stopFileInternal();
