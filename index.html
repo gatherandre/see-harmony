@@ -66,7 +66,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v48</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v49</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -213,7 +213,7 @@ let _pyResolve=null, _pyReject=null;
 
 const PY_STAGE1=`
 import numpy as np
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, filtfilt, medfilt2d
 from collections import Counter
 import json
 
@@ -224,8 +224,37 @@ def bp(d, lo, hi):
     b, a = butter(4, [lo/(sr/2), hi/(sr/2)], btype='band')
     return filtfilt(b, a, d)
 
-_full = bp(audio, 82, 500)
-_bass = bp(audio, 55, 180)
+# HPSS — harmonic-percussive source separation via median filtering
+# Separates sustained pitches from transients before chroma extraction.
+# Cleaner chroma = fewer overtone ghosts = better maj7 vs dom7 distinction.
+def hpss(signal, n_fft=2048, hop=512, harm_win=17, perc_win=17):
+    # STFT magnitude
+    frames = (len(signal) - n_fft) // hop + 1
+    window = np.hanning(n_fft)
+    S = np.zeros((n_fft//2+1, frames))
+    for i in range(frames):
+        frame = signal[i*hop:i*hop+n_fft] * window
+        S[:, i] = np.abs(np.fft.rfft(frame))
+    # Median filter along time (harmonic) and frequency (percussive)
+    H = medfilt2d(S, [1, harm_win])   # smooth across time → harmonic
+    P = medfilt2d(S, [perc_win, 1])   # smooth across freq → percussive
+    # Soft masks
+    eps = 1e-8
+    mask_h = H**2 / (H**2 + P**2 + eps)
+    S_h = S * mask_h
+    # Reconstruct harmonic signal via overlap-add
+    out = np.zeros(len(signal))
+    for i in range(frames):
+        spec = np.zeros(n_fft, dtype=complex)
+        spec[:n_fft//2+1] = S_h[:, i]
+        spec[n_fft//2+1:] = S_h[1:-1, i][::-1]
+        frame = np.real(np.fft.ifft(spec)) * window
+        out[i*hop:i*hop+n_fft] += frame
+    return out
+
+raw_full = bp(audio, 82, 500)
+_full    = hpss(raw_full)           # harmonic component for chroma
+_bass    = bp(audio, 55, 180)       # bass unchanged (needs transient info for root)
 'ok'
 `;
 
