@@ -66,7 +66,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v54</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v55</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -423,7 +423,7 @@ function readFeatures(){
         for(let i=1;i<binCount;i++){
             const hz=i*bHz;
             if(hz<82||hz>1000) continue;
-            if(freqData[i]<-72) continue;
+            if(freqData[i]<-88) continue;
             const lin=Math.pow(10,freqData[i]/20);
             const pc=((Math.round(69+12*Math.log2(hz/440))%12)+12)%12;
             ch[pc]+=lin;
@@ -474,7 +474,7 @@ function readFeatures(){
     const ch2=new Float32Array(12);
     for(let i=1;i<binCount;i++){
         const hz=i*bHz; if(hz<55||hz>4200) continue;
-        if(freqData[i]<-75) continue;
+        if(freqData[i]<-88) continue;
         const lin=Math.pow(10,freqData[i]/20);
         ch2[((Math.round(69+12*Math.log2(hz/440))%12)+12)%12]+=lin;
     }
@@ -1269,7 +1269,7 @@ function runDiagnostic(){
     for(let i=1;i<binCount;i++){
         const hz=i*bHz;
         if(hz<82||hz>1000) continue;
-        if(freqData[i]<-80) continue;
+        if(freqData[i]<-90) continue;
         const lin=Math.pow(10,freqData[i]/20);
         const pc=((Math.round(69+12*Math.log2(hz/440))%12)+12)%12;
         ch[pc]+=lin;
