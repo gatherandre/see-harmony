@@ -66,7 +66,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v56</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v57</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -95,6 +95,7 @@
     <div id="center-status">
         <div id="status-text">Ready</div>
         <div id="status-sub">press Record or load a file</div>
+        <div id="ana-bar" style="display:none;width:220px;height:2px;background:rgba(255,255,255,0.12);border-radius:2px;margin:12px auto 0;"><div id="ana-fill" style="height:100%;width:0%;background:rgba(255,255,255,0.6);border-radius:2px;transition:width 0.4s ease;"></div></div>
     </div>
     <div id="bottom-bar">
         <div id="pitch-display">
@@ -124,7 +125,7 @@ const RIBBON_H  = 64, RIBBON_N = 120, RIBBON_MS = 83;
 // Harmonic accumulator — large window suppresses melody, reveals harmony.
 // Key insight: melody notes are brief (<300ms), chord tones persist (>1s).
 // At 60fps, 180 frames = 3 seconds of accumulation.
-const HARM_WIN  = 90;   // ~1.5s at 60fps — chords need time to settle
+const HARM_WIN  = 45;   // ~0.75s at 60fps — fast enough for chord changes
 
 // Low-frequency bias for chroma extraction.
 // Harmony lives in lower registers; melody in upper.
@@ -1009,7 +1010,9 @@ function setMode(m){
                    recording?'play something':filePlaying?'':'press Record or load a file');
 }
 function setProgress(pct){
-    const bar=document.getElementById('ana-bar'),fill=document.getElementById('ana-fill');
+    const bar=document.getElementById('ana-bar');
+    const fill=document.getElementById('ana-fill');
+    if(!bar||!fill) return;
     if(pct===null){bar.style.display='none';fill.style.width='0%';return;}
     bar.style.display='block';fill.style.width=Math.round(pct)+'%';
 }
