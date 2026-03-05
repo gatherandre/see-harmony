@@ -66,7 +66,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v51</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v52</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -77,6 +77,7 @@
                 <button class="btn"        id="btn-file" onclick="document.getElementById('file-input').click()">↑ File</button>
             </div>
             <input type="file" id="file-input" accept="audio/*" onchange="loadFile(event)">
+            <button id="key-reset-btn" onclick="resetKey()" style="display:none;padding:5px 12px;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:rgba(255,200,100,0.8);background:rgba(5,5,8,0.92);border:1px solid rgba(255,200,100,0.3);border-radius:2px;cursor:pointer;">↺ key</button>
             <button id="rec-btn" onclick="toggleRecord()">
                 <span id="rec-dot"></span>
                 <span id="rec-label">Record</span>
@@ -461,10 +462,10 @@ function readFeatures(){
             harmFilled=Math.min(harmFilled+1,HARM_WIN);
 
             // Long-term chroma for key detection (accumulate for ~5s then lock)
-            if(!keyLocked){
+            if(!keyLocked && rms>0.004){  // only count frames with real signal
                 for(let i=0;i<12;i++) keyChroma[i]+=chNorm[i];
                 keyFrames++;
-                if(keyFrames>=300){  // ~5s at 60fps
+                if(keyFrames>=600){  // ~10s at 60fps — more data = better key
                     const tot2=Array.from(keyChroma).reduce((a,b)=>a+b,0)+1e-8;
                     const kn=keyChroma.map(x=>x/tot2);
                     const {key,mode}=detectKey(Array.from(kn));
@@ -472,6 +473,7 @@ function readFeatures(){
                     diatonicSet=buildDiatonicSet(key,mode);
                     keyLocked=true;
                     console.log(`Key locked: ${['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][key]} ${mode}`);
+                    document.getElementById('key-reset-btn').style.display='block';
                 }
             }
         }
@@ -589,6 +591,13 @@ async function switchToMic(){
     document.getElementById('btn-mic').classList.add('active');
     document.getElementById('btn-file').classList.remove('active');
     await startMic();
+}
+
+function resetKey(){
+    keyChroma.fill(0); keyFrames=0; keyLocked=false; diatonicSet=[];
+    detectedKey=0; detectedMode='maj';
+    document.getElementById('key-reset-btn').style.display='none';
+    console.log('[Key] reset — listening again');
 }
 
 function resetHarmBuf(){
@@ -893,6 +902,52 @@ async function analyzeFile(audioBuffer) {
     });
 }
 
+async function loadFile(e) {
+    const f = e.target.files[0]; if (!f) return;
+    if (micSource) { try { micSource.disconnect(); } catch(_) {} micSource = null; }
+    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    stopFileInternal();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    setStatus('Loading…', 'decoding audio');
+    fileBuffer = await audioCtx.decodeAudioData(await f.arrayBuffer());
+    fileDuration = fileBuffer.duration; fileOffset = 0;
+    inputMode = 'file';
+    setStatus('Analysing…', pyReady ? 'resampling audio…' : 'loading Python runtime…');
+    setProgress(5);
+    try {
+        const result = await analyzeFile(fileBuffer);
+        chordTimeline = result.timeline || result;
+        if (result.key) {
+            const kstr = result.key.replace(/ min$/, '').trim();
+            const ki = NOTES.indexOf(kstr);
+            if (ki >= 0) {
+                detectedKey = ki;
+                detectedMode = result.key.endsWith('min') ? 'min' : 'maj';
+                diatonicSet = buildDiatonicSet(detectedKey, detectedMode);
+                keyLocked = true;
+                console.log('[Key] locked:', result.key);
+            }
+        }
+        console.log('SUCCESS: timeline has', chordTimeline.length, 'changes');
+    } catch(err) {
+        console.error('analyzeFile FAILED:', err.message);
+        chordTimeline = [];
+    }
+    setProgress(null); setStatus('', '');
+    document.getElementById('btn-mic').classList.remove('active');
+    document.getElementById('btn-file').classList.add('active');
+    document.getElementById('rec-btn').style.display = 'none';
+    document.getElementById('file-name').textContent = f.name.replace(/\.[^.]+$/, '');
+    document.getElementById('time-display').textContent = '0:00 / ' + fmt(fileDuration);
+    document.getElementById('transport').classList.add('visible');
+    ribbon = []; resetHarmBuf();
+    const badge = document.getElementById('stereo-badge');
+    badge.style.display = 'block';
+    badge.textContent = fileBuffer.numberOfChannels >= 2 ? 'STEREO' : 'MONO';
+    badge.style.color = fileBuffer.numberOfChannels >= 2 ? 'rgba(120,200,255,0.7)' : 'rgba(255,255,255,0.35)';
+    badge.style.borderColor = fileBuffer.numberOfChannels >= 2 ? 'rgba(120,200,255,0.35)' : 'rgba(255,255,255,0.15)';
+    playFile();
+}
 
 function playFile(){
     if(!fileBuffer) return;
@@ -1242,7 +1297,7 @@ function runDiagnostic(){
     const peaks = [];
     for(let i=1;i<binCount;i++){
         const hz=i*bHz;
-        if(hz<82||hz>500) continue;
+        if(hz<82||hz>1000) continue;
         if(freqData[i]<-80) continue;
         const lin=Math.pow(10,freqData[i]/20);
         const pc=((Math.round(69+12*Math.log2(hz/440))%12)+12)%12;
