@@ -66,7 +66,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v53</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v54</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -172,8 +172,6 @@ const NOTES =['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 // ── Audio ────────────────────────────────────────────────────────
 let audioCtx, analyserNode, silentGain, pitchBuf;
 let analyserL=null, analyserR=null;  // stereo channel analysers
-let analyserChord=null;              // low-pass filtered analyser for chord detection only
-let lowpassFilter=null;              // BiquadFilter: cuts melody, passes bass+harmony
 let isStereo=false;
 // Stereo chroma accumulators (simplified — just pitch class energy per side)
 const stereoL=new Float32Array(12), stereoR=new Float32Array(12);
@@ -417,26 +415,19 @@ function readFeatures(){
     }
     if(ss>0) S.centroid=ema(S.centroid,clamp(ws/ss,400,5000),ALPHA);
 
-    // Chord chroma from low-pass filtered analyser.
-    // Python confirmed this signal is clean: A2=110Hz, E2=82Hz dominant for Amaj7.
-    if(analyserChord){
-        const cfSize = analyserChord.frequencyBinCount;  // 4096 for fftSize=8192
-        const cFreq  = new Float32Array(cfSize);
-        analyserChord.getFloatFrequencyData(cFreq);
-        const cBHz   = sr / analyserChord.fftSize;       // Hz per bin
+    // Chord chroma direct from main analyserNode — frequency filtered in JS.
+    // No separate filter branch needed, avoids Chrome audio optimizer killing silent nodes.
+    {
         const ch     = new Float32Array(12);
-
-        // Full chroma: 82–350Hz (below singing voice)
-        // Bass chroma: 82–200Hz (root detection)
         const chBass = new Float32Array(12);
-        for(let i=1;i<cfSize;i++){
-            const hz=i*cBHz;
+        for(let i=1;i<binCount;i++){
+            const hz=i*bHz;
             if(hz<82||hz>1000) continue;
-            if(cFreq[i]<-72)  continue;
-            const lin=Math.pow(10,cFreq[i]/20);
+            if(freqData[i]<-72) continue;
+            const lin=Math.pow(10,freqData[i]/20);
             const pc=((Math.round(69+12*Math.log2(hz/440))%12)+12)%12;
             ch[pc]+=lin;
-            if(hz<=200) chBass[pc]+=lin;  // bass register only
+            if(hz<=200) chBass[pc]+=lin;
         }
 
         const chTot=Array.from(ch).reduce((a,b)=>a+b,0)+1e-8;
@@ -535,28 +526,7 @@ async function init(){
         // Also connect analyserNode directly so it's never optimised away
         analyserNode.connect(audioCtx.destination);
 
-        // Low-pass filter for chord detection.
-        // Taps off the main analyserNode which is already connected to destination.
-        // The chord branch doesn't need its own destination connection —
-        // the main graph keeps the context alive.
-        lowpassFilter=audioCtx.createBiquadFilter();
-        lowpassFilter.type='lowpass';
-        lowpassFilter.frequency.value=1000; // full guitar range up to A5
-        lowpassFilter.Q.value=0.8;
-
-        analyserChord=audioCtx.createAnalyser();
-        analyserChord.fftSize=8192;
-        analyserChord.smoothingTimeConstant=0.92;
-
-        // analyserNode → lowpassFilter → analyserChord → silentGain
-        // analyserChord MUST have a path to destination or Chrome won't process it
-        analyserNode.connect(lowpassFilter);
-        lowpassFilter.connect(analyserChord);
-        // Chord analyser MUST have its own path to destination
-        // or Chrome's audio optimizer kills the branch (silent dead-end bug)
-        const chordGain=audioCtx.createGain(); chordGain.gain.value=0;
-        analyserChord.connect(chordGain);
-        chordGain.connect(audioCtx.destination);
+        // Chord chroma read directly from main analyserNode (frequency-filtered in JS)
         await startMic();
         document.getElementById('overlay').classList.add('hidden');
         document.getElementById('ui').style.opacity='1';
@@ -581,8 +551,6 @@ async function startMic(){
         audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false},video:false});
     micSource=audioCtx.createMediaStreamSource(micStream);
     micSource.connect(analyserNode);
-    // lowpassFilter and analyserChord automatically receive signal
-    // because analyserNode.connect(lowpassFilter) is set up at init
     inputMode='mic'; recording=false;
     resetHarmBuf();
     document.getElementById('rec-btn').style.display='flex';
@@ -1278,18 +1246,17 @@ function loop(ts){ draw(ts); requestAnimationFrame(loop); }
 
 // ── Diagnostic — dumps chord analyser state to console ───────────
 function runDiagnostic(){
-    if(!analyserChord){ console.warn('analyserChord not initialised'); return; }
-    const fftSize  = analyserChord.fftSize;
-    const binCount = analyserChord.frequencyBinCount;
+    if(!analyserNode){ console.warn('analyserNode not initialised'); return; }
+    const fftSize  = analyserNode.fftSize;
+    const binCount = analyserNode.frequencyBinCount;
     const freqData = new Float32Array(binCount);
-    analyserChord.getFloatFrequencyData(freqData);
+    analyserNode.getFloatFrequencyData(freqData);
     const sr  = audioCtx.sampleRate;
     const bHz = sr / fftSize;
 
     console.log('=== CHORD ANALYSER DIAGNOSTIC ===');
     console.log(`fftSize:${fftSize} binCount:${binCount} sr:${sr} bHz:${bHz.toFixed(3)}`);
 
-    // Check if analyserChord is getting any signal at all
     const maxDb = Math.max(...freqData);
     const minDb = Math.min(...freqData);
     console.log(`dB range: min=${minDb.toFixed(1)} max=${maxDb.toFixed(1)}`);
@@ -1320,11 +1287,7 @@ function runDiagnostic(){
     console.log('Chroma distribution:');
     sorted.forEach(([i,v])=>console.log(`  ${NOTES[i]}: ${(v*100).toFixed(1)}%`));
 
-    // Also check main analyser for comparison
-    const freqMain=new Float32Array(analyserNode.frequencyBinCount);
-    analyserNode.getFloatFrequencyData(freqMain);
-    const maxMain=Math.max(...freqMain);
-    console.log(`Main analyser max dB: ${maxMain.toFixed(1)}`);
+    console.log(`fftSize: ${fftSize}  sr: ${sr}`);
     console.log('=================================');
 }
 
