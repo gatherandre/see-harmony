@@ -66,7 +66,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v55</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v56</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -351,11 +351,20 @@ function detectChord(){
     })();
 
     let bestScore=-Infinity, bestRoot=0, bestType='maj';
+    const SEVENTH_TYPES = new Set(['maj7','min7','dom7','dim7','m7b5','minmaj7']);
     for(const {root:r, type} of searchSet){
         const tmpl=CHORD_TMPL[type]; if(!tmpl) continue;
         let score=0;
         for(let i=0;i<12;i++) score+=ch[(i+r)%12]*(tmpl[i]?2.5:-0.8);
         if(r===bassRoot) score+=bassConf*8.0;  // bass note anchors root
+        // Prefer triads — penalise 7th chords unless the 7th is clearly audible
+        if(SEVENTH_TYPES.has(type)){
+            // Find which interval is the 7th (index 10 or 11 in template)
+            const seventh7  = ch[(10+r)%12];  // minor 7th
+            const seventhM7 = ch[(11+r)%12];  // major 7th
+            const seventhPresent = Math.max(seventh7, seventhM7);
+            if(seventhPresent < 0.18) score -= 1.8;  // penalise if 7th not loud
+        }
         if(score>bestScore){ bestScore=score; bestRoot=r; bestType=type; }
     }
 
@@ -513,7 +522,7 @@ async function init(){
     try{
         audioCtx=new(window.AudioContext||window.webkitAudioContext)();
         analyserNode=audioCtx.createAnalyser();
-        analyserNode.fftSize=4096;
+        analyserNode.fftSize=16384;
         analyserNode.smoothingTimeConstant=0.85;
         pitchBuf=new Float32Array(analyserNode.fftSize);
         // analyserNode connects directly to destination.
