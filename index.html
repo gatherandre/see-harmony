@@ -1,18 +1,129 @@
- <!DOCTYPE html>
-  <html lang="en">
-  <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>See Harmony — Neural Conservatory</title>
-      <link href="https://fonts.googleapis.com/css2?
-  family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300&family=JetBrains+M
-  ono:wght@300&display=swap" rel="stylesheet">
-      <style>
-          *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-          :root{--fg:rgba(255,255,255,0.92);--fg-
-  dim:rgba(255,255,255,0.62);--fg-
-  bright:#fff;--bg:#050508;--border:rgba(255,255,255,0.15);}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>See Harmony — Neural Conservatory</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300&family=JetBrains+Mono:wght@300&display=swap" rel="stylesheet">
+    <style>
+        *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+        :root{--fg:rgba(255,255,255,0.92);--fg-dim:rgba(255,255,255,0.62);--fg-bright:#fff;--bg:#050508;--border:rgba(255,255,255,0.15);}
+        html,body{width:100%;height:100%;background:var(--bg);color:var(--fg);font-family:'Cormorant Garamond',Georgia,serif;overflow:hidden;user-select:none;}
+        #canvas{position:fixed;top:0;left:0;width:100%;height:100%;}
+        #ui{position:fixed;inset:0;pointer-events:none;display:flex;flex-direction:column;justify-content:space-between;}
+        #top-bar{display:flex;justify-content:space-between;align-items:flex-start;padding:28px 36px 0;pointer-events:all;}
+        #wordmark{font-size:13px;font-weight:300;letter-spacing:0.4em;text-transform:uppercase;color:var(--fg-dim);line-height:1;}
+        #wordmark span{display:block;font-size:9px;letter-spacing:0.5em;margin-top:6px;color:rgba(255,255,255,0.38);font-family:'JetBrains Mono',monospace;}
+        #controls{display:flex;flex-direction:column;align-items:flex-end;gap:10px;}
+        .btn-group{display:flex;gap:1px;background:var(--border);border-radius:2px;overflow:hidden;}
+        .btn{padding:7px 18px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:300;letter-spacing:0.15em;text-transform:uppercase;color:var(--fg-dim);background:rgba(5,5,8,0.92);border:none;cursor:pointer;transition:color 0.2s,background 0.2s;}
+        .btn:hover{color:var(--fg-bright);background:rgba(255,255,255,0.08);}
+        .btn.active{color:var(--fg-bright);background:rgba(255,255,255,0.13);}
+        #file-input{display:none;}
+        #rec-btn{display:none;align-items:center;gap:8px;padding:8px 20px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:300;letter-spacing:0.15em;text-transform:uppercase;color:var(--fg-dim);background:rgba(5,5,8,0.92);border:1px solid rgba(255,255,255,0.15);border-radius:2px;cursor:pointer;transition:all 0.2s;pointer-events:all;}
+        #rec-btn:hover{color:var(--fg-bright);border-color:rgba(255,255,255,0.35);}
+        #rec-btn.recording{color:#ff6b6b;border-color:rgba(255,107,107,0.5);background:rgba(255,107,107,0.08);}
+        #rec-dot{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:0.7;flex-shrink:0;}
+        #rec-btn.recording #rec-dot{animation:blink 1s infinite;}
+        @keyframes blink{0%,100%{opacity:0.7;}50%{opacity:0.15;}}
+        #transport{display:none;position:fixed;bottom:64px;left:0;right:0;align-items:center;gap:10px;padding:8px 36px;background:rgba(5,5,8,0.85);border-top:1px solid rgba(255,255,255,0.07);pointer-events:all;z-index:10;}
+        #transport.visible{display:flex;}
+        .t-btn{width:32px;height:32px;background:rgba(255,255,255,0.09);border:1px solid rgba(255,255,255,0.22);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:11px;color:var(--fg-bright);transition:background 0.2s;flex-shrink:0;}
+        .t-btn:hover{background:rgba(255,255,255,0.18);}
+        #progress-wrap{flex:1;height:3px;background:rgba(255,255,255,0.15);border-radius:2px;cursor:pointer;}
+        #progress-fill{height:100%;background:rgba(255,255,255,0.55);border-radius:2px;width:0%;pointer-events:none;}
+        #time-display{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--fg-dim);flex-shrink:0;}
+        #file-name{font-family:'JetBrains Mono',monospace;font-size:9px;color:rgba(255,255,255,0.45);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+        #center-status{position:fixed;top:42%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;transition:opacity 0.8s;}
+        #status-text{font-size:15px;font-weight:300;letter-spacing:0.25em;text-transform:uppercase;color:rgba(255,255,255,0.45);}
+        #ana-bar{width:220px;height:2px;background:rgba(255,255,255,0.12);border-radius:2px;margin:16px auto 0;display:none;}
+        #ana-fill{height:100%;width:0%;background:rgba(255,255,255,0.6);border-radius:2px;transition:width 0.4s ease;}
+        #status-sub{font-size:11px;font-family:'JetBrains Mono',monospace;color:rgba(255,255,255,0.28);margin-top:8px;letter-spacing:0.1em;}
+        #bottom-bar{padding:0 36px 22px;display:flex;justify-content:space-between;align-items:flex-end;pointer-events:none;}
+        #pitch-display{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:300;letter-spacing:0.07em;color:rgba(255,255,255,0.55);line-height:2.2;}
+        #legend{font-size:10px;font-family:'JetBrains Mono',monospace;color:rgba(255,255,255,0.38);text-align:right;line-height:2;letter-spacing:0.05em;}
+        #debug{position:fixed;bottom:145px;left:36px;font-family:'JetBrains Mono',monospace;font-size:9px;color:rgba(255,255,255,0.4);pointer-events:none;}
+        #overlay{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:100;transition:opacity 0.8s;}
+        #overlay.hidden{opacity:0;pointer-events:none;}
+        #overlay-title{font-size:28px;font-weight:300;letter-spacing:0.5em;text-transform:uppercase;color:var(--fg-bright);}
+        #overlay-sub{font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--fg-dim);letter-spacing:0.12em;}
+        #overlay-desc{max-width:400px;text-align:center;font-size:14px;font-weight:300;font-style:italic;color:rgba(255,255,255,0.5);line-height:1.7;margin-top:8px;}
+        #start-btn{margin-top:28px;padding:13px 48px;font-family:'Cormorant Garamond',serif;font-size:14px;font-weight:400;letter-spacing:0.35em;text-transform:uppercase;color:var(--fg-bright);background:transparent;border:1px solid rgba(255,255,255,0.35);cursor:pointer;transition:all 0.3s;}
+        #start-btn:hover{background:rgba(255,255,255,0.07);border-color:rgba(255,255,255,0.65);letter-spacing:0.45em;}
+        #error-msg{font-family:'JetBrains Mono',monospace;font-size:11px;color:rgba(255,120,90,0.9);display:none;margin-top:8px;}
+    </style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="debug"></div>
+<button id="diag-btn" onclick="runDiagnostic()" style="display:none;position:fixed;bottom:150px;left:36px;font-family:'JetBrains Mono',monospace;font-size:9px;padding:5px 10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);color:rgba(255,255,255,0.6);cursor:pointer;border-radius:2px;z-index:20;">⬡ diagnose</button>
+<div id="overlay">
+    <div id="overlay-title">See Harmony</div>
+    <div id="overlay-sub">Neural Conservatory · Synesthetic Music Feedback · v0.1</div>
+    <div id="overlay-desc">A real-time visual field that listens to your playing and renders harmony as colour, timbre as saturation, and tension as warmth.</div>
+    <button id="start-btn" onclick="init()">Begin</button>
+    <div id="error-msg"></div>
+</div>
+<div id="ui" style="opacity:0;transition:opacity 1.2s;">
+    <div id="top-bar">
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v58</span></div>
+        <div id="controls">
+            <div class="btn-group">
+                <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
+                <button class="btn"        id="btn-review" onclick="setMode('review')">Review</button>
+            </div>
+            <div class="btn-group">
+                <button class="btn active" id="btn-mic"  onclick="switchToMic()">⬤ Mic</button>
+                <button class="btn"        id="btn-file" onclick="document.getElementById('file-input').click()">↑ File</button>
+            </div>
+            <input type="file" id="file-input" accept="audio/*" onchange="loadFile(event)">
+            <button id="key-reset-btn" onclick="resetKey()" style="display:none;padding:5px 12px;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:rgba(255,200,100,0.8);background:rgba(5,5,8,0.92);border:1px solid rgba(255,200,100,0.3);border-radius:2px;cursor:pointer;">↺ key</button>
+            <button id="rec-btn" onclick="toggleRecord()">
+                <span id="rec-dot"></span>
+                <span id="rec-label">Record</span>
+            </button>
+        </div>
+    </div>
+    <div id="transport">
+        <div class="t-btn" id="play-btn"  onclick="togglePlayPause()">▶</div>
+        <div class="t-btn" id="stop-btn2" onclick="stopFile()" style="font-size:9px;">■</div>
+        <div id="progress-wrap" onclick="seekFile(event)"><div id="progress-fill"></div></div>
+        <div id="time-display">0:00 / 0:00</div>
+        <div id="file-name">—</div>
+        <div id="stereo-badge" style="font-family:'JetBrains Mono',monospace;font-size:8px;letter-spacing:0.12em;padding:3px 7px;border:1px solid rgba(255,255,255,0.2);border-radius:2px;color:rgba(255,255,255,0.4);display:none;">MONO</div>
+    </div>
+    <div id="center-status">
+        <div id="status-text">Ready</div>
+        <div id="status-sub">press Record or load a file</div>
+        <div id="server-status" style="font-size:9px;font-family:'JetBrains Mono',monospace;letter-spacing:0.1em;color:rgba(255,255,255,0.25);margin-top:6px;">connecting to server…</div>
+        <div id="ana-bar" style="display:none;width:220px;height:2px;background:rgba(255,255,255,0.12);border-radius:2px;margin:12px auto 0;"><div id="ana-fill" style="height:100%;width:0%;background:rgba(255,255,255,0.6);border-radius:2px;transition:width 0.4s ease;"></div></div>
+    </div>
+    <div id="bottom-bar">
+        <div id="pitch-display">
+            <div id="note-display">—</div>
+            <div id="tension-display">—</div>
+        </div>
+        <div id="legend">
+            brightness &nbsp;←&nbsp; pitch height<br>
+            saturation &nbsp;←&nbsp; timbre<br>
+            warm → cool &nbsp;←&nbsp; harmonic tension
+        </div>
+    </div>
+</div>
+<script>
+'use strict';
 
+<<<<<<< HEAD
+// ── Server config ────────────────────────────────────────────────
+const API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? 'http://localhost:5000'
+    : 'https://see-harmony-api.onrender.com';
+
+
+// ═══════════════════════════════════════════════════════════
+// SEE HARMONY — Neural Conservatory MVP v0.1
+// ═══════════════════════════════════════════════════════════
+=======
   html,body{width:100%;height:100%;background:var(--bg);color:var(--fg);font-
   family:'Cormorant Garamond',Georgia,serif;overflow:hidden;user-select:none;}
           #canvas{position:fixed;top:0;left:0;width:100%;height:100%;}
@@ -51,6 +162,7 @@
   radius:50%;background:currentColor;opacity:0.7;flex-shrink:0;}
           #rec-btn.recording #rec-dot{animation:blink 1s infinite;}
           @keyframes blink{0%,100%{opacity:0.7;}50%{opacity:0.15;}}
+>>>>>>> ffc245f2e97a41f099f810b856eb780b77041376
 
   #transport{display:none;position:fixed;bottom:64px;left:0;right:0;align-
   items:center;gap:10px;padding:8px 36px;background:rgba(5,5,8,0.85);border-
@@ -392,6 +504,25 @@
       return bv<0.22||bp<1?0:sr/bp;
   }
 
+<<<<<<< HEAD
+    let bestScore=-Infinity, bestRoot=0, bestType='maj';
+    const SEVENTH_TYPES = new Set(['maj7','min7','dom7','dim7','m7b5','minmaj7']);
+    for(const {root:r, type} of searchSet){
+        const tmpl=CHORD_TMPL[type]; if(!tmpl) continue;
+        let score=0;
+        for(let i=0;i<12;i++) score+=ch[(i+r)%12]*(tmpl[i]?2.5:-0.8);
+        if(r===bassRoot) score+=bassConf*20.0;  // bass note IS the root — decisive
+        // Prefer triads — penalise 7th chords unless the 7th is clearly audible
+        if(SEVENTH_TYPES.has(type)){
+            // Find which interval is the 7th (index 10 or 11 in template)
+            const seventh7  = ch[(10+r)%12];  // minor 7th
+            const seventhM7 = ch[(11+r)%12];  // major 7th
+            const seventhPresent = Math.max(seventh7, seventhM7);
+            if(seventhPresent < 0.18) score -= 1.8;  // penalise if 7th not loud
+        }
+        if(score>bestScore){ bestScore=score; bestRoot=r; bestType=type; }
+    }
+=======
   function detectKey(ch){
       const mc=ch.reduce((a,b)=>a+b,0)/12;
       let best=-Infinity, bestKey=0, bestMode='maj';
@@ -408,6 +539,7 @@
       }
       return {key:bestKey,mode:bestMode};
   }
+>>>>>>> ffc245f2e97a41f099f810b856eb780b77041376
 
   function buildDiatonicSet(key,mode){
       const scale=mode==='maj'?MAJ_SCALE:MIN_SCALE;
@@ -480,6 +612,24 @@
           return s;
       })();
 
+<<<<<<< HEAD
+    // Chord chroma direct from main analyserNode — frequency filtered in JS.
+    // No separate filter branch needed, avoids Chrome audio optimizer killing silent nodes.
+    {
+        const ch     = new Float32Array(12);
+        const chBass = new Float32Array(12);
+        for(let i=1;i<binCount;i++){
+            const hz=i*bHz;
+            if(hz<82||hz>1000) continue;
+            if(freqData[i]<-88) continue;
+            const lin=Math.pow(10,freqData[i]/20);
+            const pc=((Math.round(69+12*Math.log2(hz/440))%12)+12)%12;
+            // Weight lower harmonics more — suppresses overtone dominance
+            const freqWeight = Math.max(0.1, Math.min(1.0, 200/hz));
+            ch[pc]+=lin*freqWeight;
+            if(hz>=55 && hz<=165) chBass[pc]+=lin*2.0;
+        }
+=======
       let bestScore=-Infinity, bestRoot=0, bestType='maj';
       const SEVENTH_TYPES = new
   Set(['maj7','min7','dom7','dim7','m7b5','minmaj7']);
@@ -496,6 +646,7 @@
           }
           if(score>bestScore){ bestScore=score; bestRoot=r; bestType=type; }
       }
+>>>>>>> ffc245f2e97a41f099f810b856eb780b77041376
 
       const label=NOTES[bestRoot]+(CHORD_SFX[bestType]||'');
       voteBuffer.push(label);
@@ -692,12 +843,119 @@
       await startMic();
   }
 
+<<<<<<< HEAD
+
+// ── Server chord detection ───────────────────────────────────────
+let serverAvailable = null;
+let serverCheckPending = false;
+
+async function checkServer(){
+    if(serverCheckPending) return;
+    serverCheckPending = true;
+    try{
+        const r = await fetch(API_URL+'/', {signal: AbortSignal.timeout(5000)});
+        serverAvailable = r.ok;
+        const el = document.getElementById('server-status');
+        if(serverAvailable){
+            console.log('[Server] API online ✓');
+            if(el){ el.textContent='● server online'; el.style.color='rgba(100,255,150,0.5)'; }
+        } else {
+            if(el){ el.textContent='○ server offline — JS fallback'; el.style.color='rgba(255,200,100,0.4)'; }
+        }
+    }catch(e){
+        serverAvailable = false;
+        console.warn('[Server] API offline — using JS fallback');
+        const el = document.getElementById('server-status');
+        if(el){ el.textContent='○ server offline — JS fallback'; el.style.color='rgba(255,200,100,0.4)'; }
+    }
+    serverCheckPending = false;
+}
+
+function float32ToWavBase64(samples, sr){
+    const n = samples.length;
+    const buf = new ArrayBuffer(44 + n * 2);
+    const v = new DataView(buf);
+    const ws = (off, s) => { for(let i=0;i<s.length;i++) v.setUint8(off+i,s.charCodeAt(i)); };
+    ws(0,'RIFF'); v.setUint32(4,36+n*2,true); ws(8,'WAVE'); ws(12,'fmt ');
+    v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+    v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+    ws(36,'data'); v.setUint32(40,n*2,true);
+    let off=44;
+    for(let i=0;i<n;i++){
+        const s=Math.max(-1,Math.min(1,samples[i]));
+        v.setInt16(off,s<0?s*0x8000:s*0x7FFF,true); off+=2;
+    }
+    const bytes = new Uint8Array(buf);
+    let b=''; for(let i=0;i<bytes.length;i++) b+=String.fromCharCode(bytes[i]);
+    return btoa(b);
+}
+
+async function serverDetectChord(samples, sr){
+    if(!serverAvailable) return null;
+    try{
+        const b64 = float32ToWavBase64(samples, sr);
+        const r = await fetch(API_URL+'/chord', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({audio:b64, sr, format:'wav'}),
+            signal: AbortSignal.timeout(3000)
+        });
+        if(!r.ok) return null;
+        const data = await r.json();
+        return (data.chord) ? data : null;
+    }catch(e){ return null; }
+}
+
+async function serverAnalyzeFile(audioBuffer){
+    if(!serverAvailable){ await checkServer(); }
+    if(!serverAvailable) throw new Error('Server offline');
+    const target = 22050;
+    const nSamples = Math.ceil(audioBuffer.duration * target);
+    const offCtx = new OfflineAudioContext(1, nSamples, target);
+    const src2 = offCtx.createBufferSource(); src2.buffer = audioBuffer;
+    src2.connect(offCtx.destination); src2.start(0);
+    const resampled = await offCtx.startRendering();
+    const mono = resampled.getChannelData(0);
+    setStatus('Analysing…','sending to server…'); setProgress(20);
+    const b64 = float32ToWavBase64(mono, target);
+    setProgress(40);
+    const r = await fetch(API_URL+'/analyze', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({audio:b64, sr:target, format:'wav'}),
+        signal: AbortSignal.timeout(180000)
+    });
+    if(!r.ok) throw new Error('Server error '+r.status);
+    setProgress(90);
+    const data = await r.json();
+    if(data.error) throw new Error(data.error);
+    return data;
+}
+
+// Real-time server chord — fires every 1.5s
+let rtLastSend = 0;
+const RT_INTERVAL = 1500;
+function maybeServerChord(){
+    if(!audioCtx || !analyserNode || !serverAvailable) return;
+    const now = Date.now();
+    if(now - rtLastSend < RT_INTERVAL) return;
+    rtLastSend = now;
+    const timeDom = new Float32Array(analyserNode.fftSize);
+    analyserNode.getFloatTimeDomainData(timeDom);
+    serverDetectChord(timeDom, audioCtx.sampleRate).then(result => {
+        if(result && result.chord) currentChord = result.chord;
+    });
+}
+
+// ── Pyodide Web Worker ──────────────────────────────────────────
+let pyWorker=null, pyReady=false;
+let _pyResolve=null, _pyReject=null;
+=======
   function resetKey(){
       keyChroma.fill(0); keyFrames=0; keyLocked=false; diatonicSet=[];
       detectedKey=0; detectedMode='maj';
       document.getElementById('key-reset-btn').style.display='none';
       console.log('[Key] reset — listening again');
   }
+>>>>>>> ffc245f2e97a41f099f810b856eb780b77041376
 
   function resetHarmBuf(){
       for(let i=0;i<HARM_WIN;i++){ harmBuf[i].fill(0); bassBuf[i].fill(0); }
@@ -748,3 +1006,699 @@
   </script>
   </body>
   </html>
+
+<<<<<<< HEAD
+KK_MAJ = np.array([6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88])
+KK_MIN = np.array([6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17])
+NOTES  = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+
+def get_chroma(sig, start, max_hz):
+    seg = sig[start:start+WIN]
+    if len(seg) < WIN:
+        seg = np.pad(seg, (0, WIN-len(seg)))
+    mag   = np.abs(np.fft.rfft(seg * hann))
+    freqs = np.fft.rfftfreq(WIN, 1.0/sr)
+    ch    = np.zeros(12)
+    mask  = (freqs >= 82) & (freqs <= max_hz)
+    pcs   = (np.round(69 + 12*np.log2(np.maximum(freqs[mask],1e-9)/440)).astype(int)) % 12
+    np.add.at(ch, pcs, mag[mask])
+    return ch
+
+kch  = np.zeros(12)
+step = max(int(1.0*sr), 1)
+for s in range(0, len(_full)-WIN, step):
+    kch += get_chroma(_full, s, 500)
+kn = kch / (kch.sum()+1e-8); mc = kn.mean()
+
+best_ks=-np.inf; det_key=0; det_mode='maj'
+for r in range(12):
+    for mode, prof in [('maj', KK_MAJ), ('min', KK_MIN)]:
+        pv = np.roll(prof, r); mp = pv.mean()
+        a  = kn - mc;          b  = pv - mp
+        cor = np.dot(a,b) / (np.sqrt(np.dot(a,a)*np.dot(b,b))+1e-10)
+        if cor > best_ks: best_ks=cor; det_key=r; det_mode=mode
+
+MAJ_SCALE=[0,2,4,5,7,9,11]; MIN_SCALE=[0,2,3,5,7,8,10]
+MAJ_Q=['maj','min','min','maj','maj','min','dim']
+MIN_Q=['min','dim','maj','min','min','maj','maj']
+scale = MAJ_SCALE if det_mode=='maj' else MIN_SCALE
+quals = MAJ_Q    if det_mode=='maj' else MIN_Q
+
+CHORD_TMPL = {
+    'maj':    [1,0,0,0,1,0,0,1,0,0,0,0],
+    'min':    [1,0,0,1,0,0,0,1,0,0,0,0],
+    'dim':    [1,0,0,1,0,0,1,0,0,0,0,0],
+    'aug':    [1,0,0,0,1,0,0,0,1,0,0,0],
+    'maj7':   [1,0,0,0,1,0,0,1,0,0,0,1],
+    'min7':   [1,0,0,1,0,0,0,1,0,0,1,0],
+    'dom7':   [1,0,0,0,1,0,0,1,0,0,1,0],
+    'dim7':   [1,0,0,1,0,0,1,0,0,1,0,0],
+    'm7b5':   [1,0,0,1,0,0,1,0,0,0,1,0],
+    'minmaj7':[1,0,0,1,0,0,0,1,0,0,0,1],
+}
+CHORD_SFX = {
+    'maj':'','min':'m','dim':'dim','aug':'aug',
+    'maj7':'maj7','min7':'m7','dom7':'7',
+    'dim7':'dim7','m7b5':'m7b5','minmaj7':'mM7'
+}
+
+seen=set(); search=[]
+def add_c(root, t):
+    k=(root,t)
+    if k not in seen: seen.add(k); search.append(k)
+
+for i,sd in enumerate(scale):
+    root=(det_key+sd)%12; q=quals[i]
+    add_c(root,q)
+    if q=='maj' and i!=4: add_c(root,'maj7')
+    if q=='min': add_c(root,'min7')
+    if q=='dim': add_c(root,'m7b5'); add_c(root,'dim7')
+    if i==4: add_c(root,'dom7')
+for i,sd in enumerate(scale):
+    t2=(det_key+sd)%12
+    add_c((t2+7)%12,'dom7'); add_c((t2+7)%12,'maj')
+b_scale=MIN_SCALE if det_mode=='maj' else MAJ_SCALE
+b_quals=MIN_Q    if det_mode=='maj' else MAJ_Q
+for i in range(6):
+    root=(det_key+b_scale[i])%12; q=b_quals[i]
+    add_c(root,q)
+    if q=='maj': add_c(root,'dom7')
+    if q=='min': add_c(root,'min7')
+
+NOTES[det_key] + (' min' if det_mode=='min' else '')
+`;
+
+const PY_STAGE3=`
+pos_w=2.5; neg_w=-0.8
+n_wins=(len(_full)-WIN)//HOP
+raw=[]
+for wi in range(n_wins):
+    start=wi*HOP
+    cf=get_chroma(_full,start,500); cb=get_chroma(_bass,start,180)
+    ct=cf.sum(); bt=cb.sum()
+    if ct<1e-8: raw.append(None); continue
+    cfn=cf/(ct+1e-8); cbn=cb/(bt+1e-8)
+    if cfn.max()<0.08: raw.append(None); continue
+    br=int(np.argmax(cbn)); bc=float(cbn[br])
+    best_s=-np.inf; best_r=0; best_t='maj'
+    for r,t2 in search:
+        tmpl=np.array(CHORD_TMPL[t2],dtype=float)
+        roll_idx=(np.arange(12)+r)%12
+        score=float(np.dot(cfn[roll_idx], np.where(tmpl,pos_w,neg_w)))
+        if r==br: score+=bc*8.0
+        if score>best_s: best_s=score; best_r=r; best_t=t2
+    raw.append(NOTES[best_r]+CHORD_SFX[best_t])
+str(len(raw))
+`;
+
+const PY_STAGE4=`
+smoothed=[]
+for i,c in enumerate(raw):
+    w=[x for x in raw[max(0,i-2):i+3] if x is not None]
+    smoothed.append(Counter(w).most_common(1)[0][0] if w else c)
+
+tl=[]; prev=None
+for i,chord in enumerate(smoothed):
+    if chord and chord!=prev:
+        tl.append({'t':round(i*HOP/sr,1),'chord':chord}); prev=chord
+
+key_label=NOTES[det_key]+(' min' if det_mode=='min' else '')
+json.dumps({'key':key_label,'timeline':tl})
+`;
+
+const PY_WORKER_SRC=`
+importScripts('https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js');
+let py=null;
+
+async function boot(){
+    self.postMessage({type:'progress',pct:5,msg:'Loading Python runtime\u2026'});
+    py=await loadPyodide();
+    self.postMessage({type:'progress',pct:15,msg:'Loading numpy + scipy\u2026'});
+    await py.loadPackage(['numpy','scipy']);
+    self.postMessage({type:'ready'});
+}
+
+self.onmessage=async function(e){
+    if(e.data.type!=='analyze') return;
+    try{
+        py.globals.set('_abytes', new Uint8Array(e.data.buffer));
+        py.globals.set('_sr', e.data.sr);
+        self.postMessage({type:'progress',pct:20,msg:'Filtering audio\u2026'});
+        py.runPython(e.data.s1);
+        self.postMessage({type:'progress',pct:45,msg:'Detecting key\u2026'});
+        const keyName=py.runPython(e.data.s2);
+        self.postMessage({type:'progress',pct:60,msg:'Scoring chords\u2026'});
+        py.runPython(e.data.s3);
+        self.postMessage({type:'progress',pct:88,msg:'Smoothing timeline\u2026'});
+        const raw=py.runPython(e.data.s4);
+        const result=JSON.parse(raw);
+        self.postMessage({type:'progress',pct:100,msg:'Done'});
+        self.postMessage({type:'done',key:result.key,timeline:result.timeline});
+    }catch(err){
+        self.postMessage({type:'fail',msg:err.toString()});
+    }
+};
+
+boot().catch(err=>self.postMessage({type:'fail',msg:err.toString()}));
+`;
+
+function initPyodideWorker(){
+    try{
+        const blob=new Blob([PY_WORKER_SRC],{type:'application/javascript'});
+        pyWorker=new Worker(URL.createObjectURL(blob));
+        pyWorker.onmessage=function(e){
+            if(e.data.type==='ready'){
+                pyReady=true;
+                console.log('[Pyodide] ready ✓');
+            }else if(e.data.type==='progress'){
+                console.log('[Pyodide]',e.data.pct+'%',e.data.msg);
+                if(_pyResolve){setStatus('Analysing\u2026',e.data.msg);setProgress(e.data.pct);}
+            }else if(e.data.type==='done'){
+                if(_pyResolve){
+                    setProgress(null);
+                    console.log('[Pyodide] key:',e.data.key,'changes:',e.data.timeline.length);
+                    console.log('[Pyodide] first 10:',JSON.stringify(e.data.timeline.slice(0,10)));
+                    _pyResolve({key:e.data.key,timeline:e.data.timeline});
+                    _pyResolve=null; _pyReject=null;
+                }
+            }else if(e.data.type==='fail'){
+                console.error('[Pyodide] FAIL:',e.data.msg);
+                setProgress(null);
+                if(_pyReject){_pyReject(new Error(e.data.msg));_pyResolve=null;_pyReject=null;}
+            }
+        };
+        pyWorker.onerror=function(e){
+            console.error('[Pyodide] worker error:',e.message);
+            setProgress(null);
+            if(_pyReject){_pyReject(new Error(e.message));_pyResolve=null;_pyReject=null;}
+            pyWorker=null;
+        };
+    }catch(err){
+        console.warn('[Pyodide] could not init worker:',err.message);
+        pyWorker=null;
+    }
+}
+
+
+// ── Real-time server buffer ──────────────────────────────────────
+let rtBuffer = [];
+let rtLastSend = 0;
+const RT_INTERVAL = 1500; // send every 1.5s
+
+function maybeServerChord(){
+    if(!audioCtx || !analyserNode) return;
+    const now = Date.now();
+    if(now - rtLastSend < RT_INTERVAL) return;
+    rtLastSend = now;
+    const bufSize = analyserNode.fftSize;
+    const timeDom = new Float32Array(bufSize);
+    analyserNode.getFloatTimeDomainData(timeDom);
+    const sr = audioCtx.sampleRate;
+    serverDetectChord(timeDom, sr).then(result => {
+        if(result && result.chord){
+            // Override current JS chord with server result
+            currentChord = result.chord;
+            harmFilled = HARM_WIN; // mark as confident
+            // Update chroma from server if provided
+            if(result.chroma && result.chroma.length === 12){
+                const ch = result.chroma;
+                // map to hue/sat/val for visual
+                let maxIdx=0;
+                ch.forEach((v,i)=>{ if(v>ch[maxIdx]) maxIdx=i; });
+                // let the visual update naturally on next frame
+            }
+        }
+    });
+}
+
+// ── File analysis ─────────────────────────────────────────────────
+const ANALYSIS_SR = 22050;
+
+async function analyzeFile(audioBuffer) {
+    setStatus('Analysing\u2026', 'resampling audio\u2026'); setProgress(8);
+    const nSamples = Math.ceil(audioBuffer.duration * ANALYSIS_SR);
+    const offCtx = new OfflineAudioContext(1, nSamples, ANALYSIS_SR);
+    const src = offCtx.createBufferSource(); src.buffer = audioBuffer;
+    src.connect(offCtx.destination); src.start(0);
+    const resampled = await offCtx.startRendering();
+    const mono = resampled.getChannelData(0);
+
+    if (pyWorker && !pyReady) {
+        setStatus('Analysing\u2026', 'waiting for Python runtime\u2026'); setProgress(12);
+        await new Promise((res, rej) => {
+            const deadline = Date.now() + 120000;
+            const poll = setInterval(() => {
+                if (pyReady) { clearInterval(poll); res(); }
+                else if (!pyWorker || Date.now() > deadline) { clearInterval(poll); rej(new Error('Pyodide timeout')); }
+            }, 300);
+        });
+    }
+    if (!pyWorker || !pyReady) throw new Error('Pyodide not available');
+
+    return new Promise((resolve, reject) => {
+        _pyResolve = resolve; _pyReject = reject;
+        const buf = mono.buffer.slice(0);
+        pyWorker.postMessage(
+            { type: 'analyze', buffer: buf, sr: ANALYSIS_SR,
+              s1: PY_STAGE1, s2: PY_STAGE2, s3: PY_STAGE3, s4: PY_STAGE4 },
+            [buf]
+        );
+    });
+}
+
+async function loadFile(e) {
+    const f = e.target.files[0]; if (!f) return;
+    if (micSource) { try { micSource.disconnect(); } catch(_) {} micSource = null; }
+    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    stopFileInternal();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    setStatus('Loading…', 'decoding audio');
+    fileBuffer = await audioCtx.decodeAudioData(await f.arrayBuffer());
+    fileDuration = fileBuffer.duration; fileOffset = 0;
+    inputMode = 'file';
+    setStatus('Analysing…', pyReady ? 'resampling audio…' : 'loading Python runtime…');
+    setProgress(5);
+    try {
+        const result = serverAvailable ? await serverAnalyzeFile(fileBuffer) : await analyzeFile(fileBuffer);
+        chordTimeline = result.timeline || result;
+        if (result.key) {
+            const kstr = result.key.replace(/ min$/, '').trim();
+            const ki = NOTES.indexOf(kstr);
+            if (ki >= 0) {
+                detectedKey = ki;
+                detectedMode = result.key.endsWith('min') ? 'min' : 'maj';
+                diatonicSet = buildDiatonicSet(detectedKey, detectedMode);
+                keyLocked = true;
+                console.log('[Key] locked:', result.key);
+            }
+        }
+        console.log('SUCCESS: timeline has', chordTimeline.length, 'changes');
+    } catch(err) {
+        console.error('analyzeFile FAILED:', err.message);
+        chordTimeline = [];
+    }
+    setProgress(null); setStatus('', '');
+    document.getElementById('btn-mic').classList.remove('active');
+    document.getElementById('btn-file').classList.add('active');
+    document.getElementById('rec-btn').style.display = 'none';
+    document.getElementById('file-name').textContent = f.name.replace(/\.[^.]+$/, '');
+    document.getElementById('time-display').textContent = '0:00 / ' + fmt(fileDuration);
+    document.getElementById('transport').classList.add('visible');
+    ribbon = []; resetHarmBuf();
+    const badge = document.getElementById('stereo-badge');
+    badge.style.display = 'block';
+    badge.textContent = fileBuffer.numberOfChannels >= 2 ? 'STEREO' : 'MONO';
+    badge.style.color = fileBuffer.numberOfChannels >= 2 ? 'rgba(120,200,255,0.7)' : 'rgba(255,255,255,0.35)';
+    badge.style.borderColor = fileBuffer.numberOfChannels >= 2 ? 'rgba(120,200,255,0.35)' : 'rgba(255,255,255,0.15)';
+    playFile();
+}
+
+function playFile(){
+    if(!fileBuffer) return;
+    stopFileInternal();
+    if(audioCtx.state==='suspended') audioCtx.resume();
+    silentGain.gain.value=1;
+    isStereo = fileBuffer.numberOfChannels >= 2;
+
+    fileSource=audioCtx.createBufferSource();
+    fileSource.buffer=fileBuffer;
+
+    if(isStereo){
+        // Split stereo → two side analysers for spatial colour field
+        const splitter=audioCtx.createChannelSplitter(2);
+        analyserL=audioCtx.createAnalyser(); analyserL.fftSize=2048;
+        analyserR=audioCtx.createAnalyser(); analyserR.fftSize=2048;
+        fileSource.connect(splitter);
+        splitter.connect(analyserL,0);
+        splitter.connect(analyserR,1);
+        fileSource.connect(analyserNode);     // main analyser (feeds lowpass automatically)
+    } else {
+        if(analyserL){try{analyserL.disconnect();}catch(_){} analyserL=null;}
+        if(analyserR){try{analyserR.disconnect();}catch(_){} analyserR=null;}
+        fileSource.connect(analyserNode);  // lowpass taps from analyserNode
+    }
+    fileSource.start(0,clamp(fileOffset,0,fileDuration-0.01));
+    fileStartAt=audioCtx.currentTime-fileOffset;
+    fileStartTime=fileStartAt;  // sync for chord timeline lookup
+    filePlaying=true; recording=true;
+    document.getElementById('play-btn').textContent='⏸';
+    setStatus('Playing','');
+    fileSource.onended=()=>{
+        if(!filePlaying)return;
+        filePlaying=false; fileOffset=0; recording=false;
+        document.getElementById('play-btn').textContent='▶';
+        setStatus('Finished','press ▶ to replay');
+    };
+}
+
+function stopFileInternal(){
+    if(fileSource){fileSource.onended=null;try{fileSource.stop();}catch(_){}try{fileSource.disconnect();}catch(_){} fileSource=null;}
+    if(silentGain) silentGain.gain.value=0;
+    filePlaying=false;
+}
+
+function pauseFile(){
+    if(!filePlaying)return;
+    fileOffset=clamp(audioCtx.currentTime-fileStartAt,0,fileDuration);
+    stopFileInternal(); recording=false;
+    document.getElementById('play-btn').textContent='▶';
+    setStatus('Paused','press ▶ to continue');
+}
+
+function stopFile(){
+    stopFileInternal(); fileOffset=0; recording=false;
+    document.getElementById('play-btn').textContent='▶';
+    document.getElementById('progress-fill').style.width='0%';
+    setStatus('Stopped','press ▶ to restart');
+}
+
+function togglePlayPause(){filePlaying?pauseFile():playFile();}
+
+function seekFile(ev){
+    if(!fileBuffer)return;
+    const r=ev.currentTarget.getBoundingClientRect();
+    fileOffset=clamp((ev.clientX-r.left)/r.width,0,1)*fileDuration;
+    if(filePlaying)playFile();
+    else document.getElementById('progress-fill').style.width=((fileOffset/fileDuration)*100)+'%';
+}
+
+// ── Mode ─────────────────────────────────────────────────────────
+function setMode(m){
+    mode=m;
+    document.getElementById('btn-play').classList.toggle('active',  m==='play');
+    document.getElementById('btn-review').classList.toggle('active',m==='review');
+    if(m==='review') setStatus('Review','your harmonic trace');
+    else setStatus(recording?'Recording':filePlaying?'Playing':'Ready',
+                   recording?'play something':filePlaying?'':'press Record or load a file');
+}
+function setProgress(pct){
+    const bar=document.getElementById('ana-bar');
+    const fill=document.getElementById('ana-fill');
+    if(!bar||!fill) return;
+    if(pct===null){bar.style.display='none';fill.style.width='0%';return;}
+    bar.style.display='block';fill.style.width=Math.round(pct)+'%';
+}
+function setStatus(t,s){
+    document.getElementById('status-text').textContent=t;
+    document.getElementById('status-sub').textContent=s||'';
+}
+
+// ── Visual processing ────────────────────────────────────────────
+function processVisuals(){
+    readFeatures();
+    const rms=S.rms, hasSignal=rms>0.0005;
+    const dim=Math.min(W,H);
+    animPhase+=0.0004;
+
+    // Physical layer — sky (full spectrum: pitch→hue, centroid→saturation, brightness→value)
+    // Sky uses a DIFFERENT mapping from the orb so the two layers are visually distinct.
+    // Hue: pitch height sweeps the full spectrum (low=red, mid=green, high=violet)
+    // This is ratio-preserving across the musical octave range.
+    const semi=Math.log2(Math.max(S.pitch,20)/440)*12;
+    const pitchT=clamp((semi-SEMI_MIN)/(SEMI_MAX-SEMI_MIN),0,1);
+    const skyH=pitchT*300;                                          // 0°(red)→300°(violet)
+    const skyS=clamp((S.centroid-400)/4600,0.4,1.0);              // timbre → saturation
+    const skyV=clamp(0.25+0.75*pitchT,0.25,1.0);                  // higher=brighter
+
+    // Semantic layer — chord detection
+    if(chordTimeline.length>0 && inputMode==='file'){
+        // FILE MODE: timeline pre-computed offline — accurate, no flickering
+        const now=audioCtx.currentTime-fileStartAt;
+        let chord=chordTimeline[0].chord;
+        for(const entry of chordTimeline){if(entry.t<=now)chord=entry.chord;else break;}
+        if(chord!==currentChord.label){
+            let found=false;
+            for(let r=0;r<12&&!found;r++){
+                for(const type of Object.keys(CHORD_MAP)){
+                    if(NOTES[r]+(CHORD_SFX[type]||CHORD_MAP[type].sfx||'')===chord){
+                        const cm=CHORD_MAP[type];
+                        currentChord={hue:cm.h,sat:cm.s,val:cm.v,label:chord};
+                        found=true;break;
+                    }
+                }
+            }
+            if(!found) currentChord={hue:HUE_WARM,sat:0.6,val:0.5,label:chord};
+        }
+    } else if(hasSignal && harmFilled>=HARM_WIN/3){
+        // MIC MODE: real-time detection
+        const detected=detectChord();
+        if(detected) currentChord=detected;
+    }
+
+    const ambH=(HUE_WARM+Math.sin(animPhase)*20+360)%360;
+
+    if(hasSignal){
+        V.skyH=ema(V.skyH,skyH,0.08); V.skyS=ema(V.skyS,skyS,0.08); V.skyV=ema(V.skyV,skyV,0.08);
+        V.orbH=ema(V.orbH,currentChord.hue,0.05);
+        V.orbS=ema(V.orbS,currentChord.sat,0.05);
+        V.orbV=ema(V.orbV,currentChord.val,0.05);
+        V.orbR=ema(V.orbR,dim*0.09+S.onset*dim*0.09,0.28);
+        V.glow=ema(V.glow,clamp(rms*80,0.25,1.0),0.18);
+    } else {
+        V.skyH=ema(V.skyH,ambH,0.003); V.skyS=ema(V.skyS,0.55,0.003); V.skyV=ema(V.skyV,0.45,0.003);
+        V.orbH=ema(V.orbH,ambH,0.003); V.orbS=ema(V.orbS,0.55,0.003); V.orbV=ema(V.orbV,0.45,0.003);
+        V.orbR=ema(V.orbR,dim*0.07,0.04); V.glow=ema(V.glow,0.28,0.04);
+    }
+}
+
+// ── Renderer ────────────────────────────────────────────────────
+function draw(ts){
+    if(!audioCtx) return;
+    processVisuals();
+
+    const {skyH:sh,skyS:ss,skyV:sv,orbH:oh,orbS:os,orbV:ov,orbR:oR,glow:gl}=V;
+
+    // In Review mode, ribbon takes over — orb shrinks to corner
+    const isReview = (mode==='review' && ribbon.length>1);
+    const orbScale = isReview ? 0.3 : 1.0;
+    const rOr = oR * orbScale;
+
+    // Layout
+    const ribbonH = isReview ? Math.floor(H*0.55) : RIBBON_H;
+    const cx = isReview ? rOr*2 + 60 : W/2;
+    const cy = isReview ? rOr*2 + 60 : (H-ribbonH)/2;
+
+    cx2.fillStyle='#050508'; cx2.fillRect(0,0,W,H);
+
+    // Sky
+    const R=Math.min(W,H)*(isReview?0.35:0.9);
+    const g1=cx2.createRadialGradient(cx,cy,0,cx,cy,R);
+    g1.addColorStop(0,   hsvCss(sh,ss,sv,      isReview?0.7:0.95));
+    g1.addColorStop(0.3, hsvCss(sh,ss,sv*0.7,  isReview?0.5:0.80));
+    g1.addColorStop(0.7, hsvCss(sh,ss,sv*0.3,  isReview?0.2:0.45));
+    g1.addColorStop(1,   'rgba(5,5,8,0)');
+    cx2.fillStyle=g1; cx2.fillRect(0,0,W,H);
+
+    if(!isReview){
+        const dr=ts*0.00022;
+        const ox=cx+Math.sin(dr)*W*0.06, oy=cy+Math.cos(dr*0.73)*H*0.06;
+        const g2=cx2.createRadialGradient(ox,oy,0,ox,oy,R*0.5);
+        g2.addColorStop(0,hsvCss((sh+40)%360,ss*0.6,sv*0.5,0.35));
+        g2.addColorStop(1,'rgba(5,5,8,0)');
+        cx2.fillStyle=g2; cx2.fillRect(0,0,W,H);
+
+        // ── Stereo edge fields — only when stereo file playing ────
+        if(isStereo&&analyserL&&analyserR){
+            // Find dominant pitch class on each side
+            const domL=stereoL.indexOf(Math.max(...stereoL));
+            const domR=stereoR.indexOf(Math.max(...stereoR));
+            // Map pitch class to hue (C=0°, full chromatic circle)
+            const hL=(domL/12)*360, hR=(domR/12)*360;
+            const sideV=Math.min(sv*1.2,1.0);
+
+            // Left edge — bass register colour bleeds in from left
+            const gL=cx2.createLinearGradient(0,0,W*0.38,0);
+            gL.addColorStop(0,   hsvCss(hL,0.85,sideV,0.55));
+            gL.addColorStop(0.5, hsvCss(hL,0.7, sideV,0.22));
+            gL.addColorStop(1,   'rgba(5,5,8,0)');
+            cx2.fillStyle=gL; cx2.fillRect(0,0,W,H);
+
+            // Right edge — treble register colour bleeds in from right
+            const gR=cx2.createLinearGradient(W,0,W*0.62,0);
+            gR.addColorStop(0,   hsvCss(hR,0.85,sideV,0.55));
+            gR.addColorStop(0.5, hsvCss(hR,0.7, sideV,0.22));
+            gR.addColorStop(1,   'rgba(5,5,8,0)');
+            cx2.fillStyle=gR; cx2.fillRect(0,0,W,H);
+        }
+    }
+
+    // Orb halos
+    for(let l=0;l<(isReview?2:4);l++){
+        const lr=(4.2+l*3.5)*rOr, la=(0.14-l*0.028)*gl;
+        const og=cx2.createRadialGradient(cx,cy,rOr*0.2,cx,cy,lr);
+        og.addColorStop(0,hsvCss(oh,os,ov,la*3.0));
+        og.addColorStop(1,hsvCss(oh,os,ov,0));
+        cx2.fillStyle=og; cx2.beginPath(); cx2.arc(cx,cy,lr,0,Math.PI*2); cx2.fill();
+    }
+
+    // Orb body
+    const ob=cx2.createRadialGradient(cx-rOr*0.32,cy-rOr*0.32,rOr*0.03,cx,cy,rOr);
+    ob.addColorStop(0,    hsvCss(oh,os*0.4,Math.min(ov*1.6,1),0.98));
+    ob.addColorStop(0.45, hsvCss(oh,os,ov,0.95));
+    ob.addColorStop(1,    hsvCss(oh,os,ov*0.5,0.38));
+    cx2.fillStyle=ob; cx2.beginPath(); cx2.arc(cx,cy,rOr,0,Math.PI*2); cx2.fill();
+
+    // Specular
+    const hlR=rOr*0.42;
+    const hl=cx2.createRadialGradient(cx-rOr*0.3,cy-rOr*0.3,0,cx-rOr*0.3,cy-rOr*0.3,hlR);
+    hl.addColorStop(0,`rgba(255,255,255,${0.22*gl})`);
+    hl.addColorStop(1,'rgba(255,255,255,0)');
+    cx2.fillStyle=hl; cx2.beginPath(); cx2.arc(cx-rOr*0.3,cy-rOr*0.3,hlR,0,Math.PI*2); cx2.fill();
+
+    // Chord label on orb
+    if(currentChord.label&&gl>0.12&&!isReview){
+        const fs=Math.max(12,rOr*0.28)|0;
+        cx2.font=`300 ${fs}px 'JetBrains Mono',monospace`;
+        cx2.textAlign='center'; cx2.textBaseline='middle';
+        cx2.fillStyle=`rgba(255,255,255,${Math.min(gl*1.5,0.82)})`;
+        cx2.fillText(currentChord.label,cx,cy);
+    }
+
+    // ── Ribbon ───────────────────────────────────────────────────
+    // Write to ribbon only when recording is active
+    if(recording&&ts-lastRibMs>RIBBON_MS){
+        ribbon.push({h:oh,s:os,v:ov,label:currentChord.label});
+        if(ribbon.length>RIBBON_N) ribbon.shift();
+        lastRibMs=ts;
+    }
+
+    const ry = H - ribbonH;
+
+    // Panel background
+    cx2.fillStyle=`rgba(5,5,8,${isReview?0.88:0.75})`; cx2.fillRect(0,ry,W,ribbonH);
+    cx2.fillStyle='rgba(255,255,255,0.07)'; cx2.fillRect(0,ry,W,1);
+
+    if(ribbon.length>1){
+        const sw=W/RIBBON_N, sx=W-ribbon.length*sw;
+        const labelFontSize=isReview?11:8;
+        for(let i=0;i<ribbon.length;i++){
+            const e=ribbon[i], x=sx+i*sw;
+            const age=(ribbon.length-i)/ribbon.length, al=0.15+(1-age)*0.82;
+            const cg=cx2.createLinearGradient(0,ry,0,H);
+            cg.addColorStop(0,    hsvCss(e.h,e.s,e.v*0.2, 0));
+            cg.addColorStop(0.12, hsvCss(e.h,e.s,e.v,     al));
+            cg.addColorStop(0.5,  hsvCss(e.h,e.s,e.v,     al));
+            cg.addColorStop(0.88, hsvCss(e.h,e.s,e.v*0.5, al*0.65));
+            cg.addColorStop(1,    hsvCss(e.h,e.s,e.v*0.08,0));
+            cx2.fillStyle=cg; cx2.fillRect(x,ry,sw+0.8,ribbonH);
+
+            // Chord labels — show when chord changes
+            if(e.label&&i>0&&ribbon[i-1].label!==e.label&&(1-age)>0.05){
+                cx2.save();
+                cx2.font=`300 ${labelFontSize}px 'JetBrains Mono',monospace`;
+                cx2.textAlign='center'; cx2.textBaseline='middle';
+                cx2.fillStyle=`rgba(255,255,255,${Math.min(al*0.9,0.75)})`;
+                cx2.fillText(e.label, x+sw/2, ry+ribbonH/2);
+                cx2.restore();
+            }
+        }
+        // Playhead
+        cx2.fillStyle='rgba(255,255,255,0.5)';
+        cx2.fillRect(Math.floor(sx+ribbon.length*sw)-1,ry+4,2,ribbonH-8);
+    } else if(isReview){
+        // Review mode with empty ribbon
+        cx2.font="300 13px 'JetBrains Mono',monospace";
+        cx2.textAlign='center'; cx2.textBaseline='middle';
+        cx2.fillStyle='rgba(255,255,255,0.2)';
+        cx2.fillText('no recording yet — switch to Play and Record something',W/2,ry+ribbonH/2);
+    }
+
+    // Review mode label
+    if(isReview){
+        cx2.font="300 9px 'JetBrains Mono',monospace";
+        cx2.textAlign='left'; cx2.textBaseline='top';
+        cx2.fillStyle='rgba(255,255,255,0.25)';
+        cx2.fillText('HARMONIC TRACE',36,ry+10);
+    }
+
+    // File progress
+    if(filePlaying&&fileDuration>0){
+        const el=clamp(audioCtx.currentTime-fileStartAt,0,fileDuration);
+        document.getElementById('progress-fill').style.width=(el/fileDuration*100)+'%';
+        if(Math.floor(ts/400)!==Math.floor((ts-16)/400))
+            document.getElementById('time-display').textContent=fmt(el)+' / '+fmt(fileDuration);
+    }
+
+    // HUD
+    if(Math.floor(ts/160)!==Math.floor((ts-16)/160)){
+        document.getElementById('note-display').textContent=`♩  ${noteHz(S.pitch)}  (${Math.round(S.pitch)} Hz)`;
+        const tl=S.tension<0.32?'consonant':S.tension<0.52?'neutral':S.tension<0.72?'tense':'dissonant';
+        document.getElementById('tension-display').textContent=`◈  ${tl}  (${Math.round(S.tension*100)}%)`;
+        document.getElementById('center-status').style.opacity=
+            (S.rms>0.001&&(recording||filePlaying))||isReview?'0':'1';
+        // Show top 3 pitch classes from harmSum for diagnostic
+        const n=Math.min(harmFilled,HARM_WIN)||1;
+        const dbCh=Array.from({length:12},(_,i)=>({i,v:harmSum[i]/n}))
+                       .sort((a,b)=>b.v-a.v).slice(0,3)
+                       .map(x=>NOTES[x.i]+':'+x.v.toFixed(2)).join(' ');
+        document.getElementById('debug').textContent=
+            `rms:${S.rms.toFixed(4)} chord:${currentChord.label||'—'} key:${keyLocked?(['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][detectedKey]+detectedMode):'?'} buf:${harmFilled}/${HARM_WIN} top:[${dbCh}]`;
+    }
+}
+
+function loop(ts){ draw(ts); requestAnimationFrame(loop); }
+
+// ── Diagnostic — dumps chord analyser state to console ───────────
+function runDiagnostic(){
+    if(!analyserNode){ console.warn('analyserNode not initialised'); return; }
+    const fftSize  = analyserNode.fftSize;
+    const binCount = analyserNode.frequencyBinCount;
+    const freqData = new Float32Array(binCount);
+    analyserNode.getFloatFrequencyData(freqData);
+    const sr  = audioCtx.sampleRate;
+    const bHz = sr / fftSize;
+
+    console.log('=== CHORD ANALYSER DIAGNOSTIC ===');
+    console.log(`fftSize:${fftSize} binCount:${binCount} sr:${sr} bHz:${bHz.toFixed(3)}`);
+
+    const maxDb = Math.max(...freqData);
+    const minDb = Math.min(...freqData);
+    console.log(`dB range: min=${minDb.toFixed(1)} max=${maxDb.toFixed(1)}`);
+    if(maxDb < -100){ console.warn('NO SIGNAL in chord analyser — filter branch dead'); return; }
+
+    // Show strongest bins 55–400Hz
+    const NOTES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+    const ch = new Float32Array(12);
+    const peaks = [];
+    for(let i=1;i<binCount;i++){
+        const hz=i*bHz;
+        if(hz<82||hz>1000) continue;
+        if(freqData[i]<-90) continue;
+        const lin=Math.pow(10,freqData[i]/20);
+        const pc=((Math.round(69+12*Math.log2(hz/440))%12)+12)%12;
+        ch[pc]+=lin;
+        peaks.push({hz,db:freqData[i],pc});
+    }
+    peaks.sort((a,b)=>b.db-a.db);
+    console.log('Top 10 frequency peaks (82-500Hz):');
+    peaks.slice(0,10).forEach(p=>
+        console.log(`  ${p.hz.toFixed(1)}Hz  ${NOTES[p.pc]}  ${p.db.toFixed(1)}dB`)
+    );
+
+    const tot=ch.reduce((a,b)=>a+b,0)+1e-8;
+    const chN=ch.map(x=>x/tot);
+    const sorted=[...chN.entries()].sort((a,b)=>b[1]-a[1]);
+    console.log('Chroma distribution:');
+    sorted.forEach(([i,v])=>console.log(`  ${NOTES[i]}: ${(v*100).toFixed(1)}%`));
+
+    console.log(`fftSize: ${fftSize}  sr: ${sr}`);
+    console.log('=================================');
+}
+
+cv=document.getElementById('canvas'); cx2=cv.getContext('2d');
+function resize(){W=cv.width=window.innerWidth;H=cv.height=window.innerHeight;}
+resize();
+window.addEventListener('resize',()=>{resize();});
+document.addEventListener('click',()=>{if(audioCtx&&audioCtx.state==='suspended')audioCtx.resume();});
+window.addEventListener('keydown',e=>{
+    if(e.key==='p'||e.key==='P') setMode('play');
+    if(e.key==='v'||e.key==='V') setMode('review');
+    if(e.key==='m'||e.key==='M') switchToMic();
+    if(e.key===' '){e.preventDefault();inputMode==='mic'?toggleRecord():togglePlayPause();}
+});
+</script>
+</body>
+</html>
+
+=======
+>>>>>>> ffc245f2e97a41f099f810b856eb780b77041376
