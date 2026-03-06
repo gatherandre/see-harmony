@@ -66,7 +66,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v60</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v61</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -961,36 +961,6 @@ function initPyodideWorker(){
 
 
 // ── Real-time server buffer ──────────────────────────────────────
-let rtBuffer = [];
-let rtLastSend = 0;
-const RT_INTERVAL = 1500; // send every 1.5s
-
-function maybeServerChord(){
-    if(!audioCtx || !analyserNode) return;
-    const now = Date.now();
-    if(now - rtLastSend < RT_INTERVAL) return;
-    rtLastSend = now;
-    const bufSize = analyserNode.fftSize;
-    const timeDom = new Float32Array(bufSize);
-    analyserNode.getFloatTimeDomainData(timeDom);
-    const sr = audioCtx.sampleRate;
-    serverDetectChord(timeDom, sr).then(result => {
-        if(result && result.chord){
-            // Override current JS chord with server result
-            currentChord = result.chord;
-            harmFilled = HARM_WIN; // mark as confident
-            // Update chroma from server if provided
-            if(result.chroma && result.chroma.length === 12){
-                const ch = result.chroma;
-                // map to hue/sat/val for visual
-                let maxIdx=0;
-                ch.forEach((v,i)=>{ if(v>ch[maxIdx]) maxIdx=i; });
-                // let the visual update naturally on next frame
-            }
-        }
-    });
-}
-
 // ── File analysis ─────────────────────────────────────────────────
 const ANALYSIS_SR = 22050;
 
