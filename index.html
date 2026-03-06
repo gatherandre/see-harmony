@@ -66,7 +66,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v59</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v60</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -546,7 +546,7 @@ async function init(){
         analyserNode.connect(audioCtx.destination);
 
         // Chord chroma read directly from main analyserNode (frequency-filtered in JS)
-        await startMic();
+        // Don't ask for mic permission on init — wait for user to click MIC
         document.getElementById('overlay').classList.add('hidden');
         document.getElementById('ui').style.opacity='1';
         document.getElementById('diag-btn').style.display='block';
