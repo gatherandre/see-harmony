@@ -2,14 +2,38 @@ import os
 import io
 import base64
 import numpy as np
-import soundfile as sf
-import librosa
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from chord_detector import analyze_chunk, analyze_file
 
 app = Flask(__name__)
 CORS(app, origins="*")
+
+# Lazy-load heavy modules to avoid OOM on Render free tier startup
+_sf = None
+_librosa = None
+_detector = None
+
+def get_sf():
+    global _sf
+    if _sf is None:
+        import soundfile
+        _sf = soundfile
+    return _sf
+
+def get_librosa():
+    global _librosa
+    if _librosa is None:
+        import librosa
+        _librosa = librosa
+    return _librosa
+
+def get_detector():
+    global _detector
+    if _detector is None:
+        from chord_detector import analyze_chunk, analyze_file
+        _detector = {'chunk': analyze_chunk, 'file': analyze_file}
+    return _detector
+
 
 # ── Health check ──────────────────────────────────────────────────
 @app.route('/', methods=['GET'])
@@ -18,12 +42,13 @@ def health():
 
 
 # ── Real-time chunk endpoint ───────────────────────────────────────
-# POST /chord
-# Body (JSON): { "audio": "<base64 WAV or raw float32>", "sr": 44100, "format": "wav"|"f32" }
-# Returns:     { "chord": "Cmaj7", "confidence": 0.87, "chroma": [...] }
 @app.route('/chord', methods=['POST'])
 def chord():
     try:
+        sf = get_sf()
+        librosa = get_librosa()
+        det = get_detector()
+
         data = request.get_json(force=True)
         fmt  = data.get('format', 'wav')
         sr_in = int(data.get('sr', 44100))
@@ -36,16 +61,14 @@ def chord():
             if audio.ndim == 2:
                 audio = audio.mean(axis=1)
         else:
-            # raw float32 PCM
             audio = np.frombuffer(raw, dtype='<f4').copy()
             sr    = sr_in
 
-        # Resample to 22050 for consistency
         if sr != 22050:
             audio = librosa.resample(audio, orig_sr=sr, target_sr=22050)
             sr = 22050
 
-        result = analyze_chunk(audio, sr)
+        result = det['chunk'](audio, sr)
         return jsonify(result)
 
     except Exception as e:
@@ -53,13 +76,13 @@ def chord():
 
 
 # ── Full file analysis endpoint ────────────────────────────────────
-# POST /analyze
-# Body (multipart): file=<audio file>
-#   OR (JSON):      { "audio": "<base64>", "sr": 44100, "format": "wav" }
-# Returns: { "key": "C maj", "timeline": [{t, chord},...], "duration": 275.3 }
 @app.route('/analyze', methods=['POST'])
 def analyze():
     try:
+        sf = get_sf()
+        librosa = get_librosa()
+        det = get_detector()
+
         # Accept multipart file upload
         if request.files and 'file' in request.files:
             f = request.files['file']
@@ -86,7 +109,7 @@ def analyze():
         else:
             return jsonify({'error': 'No audio provided'}), 400
 
-        result = analyze_file(audio, sr)
+        result = det['file'](audio, sr)
         return jsonify(result)
 
     except Exception as e:
