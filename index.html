@@ -66,7 +66,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v62</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v63</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -692,6 +692,8 @@ async function serverDetectChord(samples, sr){
 async function serverAnalyzeFile(audioBuffer){
     if(!serverAvailable){ await checkServer(); }
     if(!serverAvailable) throw new Error('Server offline');
+
+    // ── Resample to 22050Hz mono ────────────────────────────────
     const target = 22050;
     const nSamples = Math.ceil(audioBuffer.duration * target);
     const offCtx = new OfflineAudioContext(1, nSamples, target);
@@ -699,21 +701,102 @@ async function serverAnalyzeFile(audioBuffer){
     src2.connect(offCtx.destination); src2.start(0);
     const resampled = await offCtx.startRendering();
     const mono = resampled.getChannelData(0);
-    setStatus('Analysing…','resampling complete — sending to server…'); setProgress(20);
-    const b64 = float32ToWavBase64(mono, target);
-    setProgress(40);
-    setStatus('Analysing…','server processing (may take 30s on first load)…');
-    const r = await fetch(API_URL+'/analyze', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({audio:b64, sr:target, format:'wav'}),
-        signal: AbortSignal.timeout(180000)
-    });
-    if(!r.ok) throw new Error('Server error '+r.status);
-    setProgress(90);
-    setStatus('Analysing…','building chord timeline…');
-    const data = await r.json();
-    if(data.error) throw new Error(data.error);
-    return data;
+    setStatus('Analysing…','resampled — sending chunks to server…'); setProgress(5);
+
+    // ── Slice into 2s windows, 0.5s hop → send each to /chord ──
+    const winSec = 2.0, hopSec = 0.5;
+    const win = Math.floor(winSec * target);
+    const hop = Math.floor(hopSec * target);
+    const nFrames = Math.max(1, Math.floor((mono.length - win) / hop) + 1);
+    console.log(`[Chunked] ${nFrames} frames, ${(mono.length/target).toFixed(1)}s audio`);
+
+    const rawChords = [];
+    const chromaAccum = new Float64Array(12);  // for key detection
+    let failures = 0;
+
+    for(let i = 0; i < nFrames; i++){
+        const start = i * hop;
+        const chunk = mono.slice(start, start + win);
+        // Pad if short
+        const padded = chunk.length < win
+            ? new Float32Array([...chunk, ...new Float32Array(win - chunk.length)])
+            : chunk;
+
+        const b64 = float32ToWavBase64(padded, target);
+        try {
+            const r = await fetch(API_URL+'/chord', {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({audio: b64, sr: target, format:'wav'}),
+                signal: AbortSignal.timeout(15000)
+            });
+            if(r.ok){
+                const data = await r.json();
+                rawChords.push(data.chord || '');
+                // Accumulate chroma for key detection
+                if(data.chroma && data.chroma.length === 12){
+                    for(let c = 0; c < 12; c++) chromaAccum[c] += data.chroma[c];
+                }
+            } else {
+                rawChords.push('');
+                failures++;
+            }
+        } catch(e){
+            rawChords.push('');
+            failures++;
+        }
+
+        // Progress update every 5 frames
+        if(i % 5 === 0 || i === nFrames - 1){
+            const pct = Math.round(5 + 85 * (i+1) / nFrames);
+            setProgress(pct);
+            setStatus('Analysing…', `chord ${i+1}/${nFrames} (${Math.round((i+1)/nFrames*100)}%)`);
+        }
+    }
+
+    console.log(`[Chunked] Done: ${rawChords.length} frames, ${failures} failures`);
+    setStatus('Analysing…','smoothing and building timeline…'); setProgress(92);
+
+    // ── Key detection from accumulated chroma ───────────────────
+    const chTotal = Array.from(chromaAccum).reduce((a,b)=>a+b,0) + 1e-8;
+    const chNorm = Array.from(chromaAccum).map(x=>x/chTotal);
+    const {key: detKey, mode: detMode} = detectKey(chNorm);
+    const keyLabel = NOTES[detKey] + (detMode === 'min' ? ' min' : '');
+    console.log(`[Chunked] Key: ${keyLabel}`);
+
+    // ── Majority vote smoothing (5-frame window) ────────────────
+    const smoothed = [];
+    for(let i = 0; i < rawChords.length; i++){
+        const window = rawChords.slice(Math.max(0, i-2), i+3);
+        const votes = {};
+        for(const x of window){
+            if(x) votes[x] = (votes[x]||0) + 1;
+        }
+        const entries = Object.entries(votes);
+        smoothed.push(entries.length > 0
+            ? entries.reduce((a,b) => b[1] > a[1] ? b : a)[0]
+            : rawChords[i]);
+    }
+
+    // ── Build timeline (emit on chord change only) ──────────────
+    const timeline = [];
+    let prev = null;
+    for(let i = 0; i < smoothed.length; i++){
+        const chord = smoothed[i];
+        if(chord && chord !== prev){
+            timeline.push({ t: Math.round(i * hopSec * 100) / 100, chord });
+            prev = chord;
+        }
+    }
+
+    setProgress(100);
+    console.log(`[Chunked] Timeline: ${timeline.length} changes`);
+    console.log('[Chunked] First 10:', JSON.stringify(timeline.slice(0,10)));
+
+    return {
+        key: keyLabel,
+        timeline,
+        duration: audioBuffer.duration
+    };
 }
 
 // Real-time server chord — fires every 1.5s
