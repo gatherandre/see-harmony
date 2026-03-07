@@ -66,7 +66,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v63</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v64</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -703,21 +703,22 @@ async function serverAnalyzeFile(audioBuffer){
     const mono = resampled.getChannelData(0);
     setStatus('Analysing…','resampled — sending chunks to server…'); setProgress(5);
 
-    // ── Slice into 2s windows, 0.5s hop → send each to /chord ──
-    const winSec = 2.0, hopSec = 0.5;
+    // ── Slice into 3s windows, 1.0s hop → send each to /chord ──
+    // 3s windows: enough harmonic content for accurate detection
+    // 1.0s hop: reduces transition-straddling frames vs 0.5s
+    const winSec = 3.0, hopSec = 1.0;
     const win = Math.floor(winSec * target);
     const hop = Math.floor(hopSec * target);
     const nFrames = Math.max(1, Math.floor((mono.length - win) / hop) + 1);
     console.log(`[Chunked] ${nFrames} frames, ${(mono.length/target).toFixed(1)}s audio`);
 
     const rawChords = [];
-    const chromaAccum = new Float64Array(12);  // for key detection
+    const chromaAccum = new Float64Array(12);
     let failures = 0;
 
     for(let i = 0; i < nFrames; i++){
         const start = i * hop;
         const chunk = mono.slice(start, start + win);
-        // Pad if short
         const padded = chunk.length < win
             ? new Float32Array([...chunk, ...new Float32Array(win - chunk.length)])
             : chunk;
@@ -732,7 +733,6 @@ async function serverAnalyzeFile(audioBuffer){
             if(r.ok){
                 const data = await r.json();
                 rawChords.push(data.chord || '');
-                // Accumulate chroma for key detection
                 if(data.chroma && data.chroma.length === 12){
                     for(let c = 0; c < 12; c++) chromaAccum[c] += data.chroma[c];
                 }
@@ -745,7 +745,6 @@ async function serverAnalyzeFile(audioBuffer){
             failures++;
         }
 
-        // Progress update every 5 frames
         if(i % 5 === 0 || i === nFrames - 1){
             const pct = Math.round(5 + 85 * (i+1) / nFrames);
             setProgress(pct);
@@ -753,7 +752,8 @@ async function serverAnalyzeFile(audioBuffer){
         }
     }
 
-    console.log(`[Chunked] Done: ${rawChords.length} frames, ${failures} failures`);
+    console.log(`[Chunked] Raw: ${rawChords.length} frames, ${failures} failures`);
+    console.log('[Chunked] Raw first 30:', rawChords.slice(0,30).join(' '));
     setStatus('Analysing…','smoothing and building timeline…'); setProgress(92);
 
     // ── Key detection from accumulated chroma ───────────────────
@@ -763,10 +763,14 @@ async function serverAnalyzeFile(audioBuffer){
     const keyLabel = NOTES[detKey] + (detMode === 'min' ? ' min' : '');
     console.log(`[Chunked] Key: ${keyLabel}`);
 
-    // ── Majority vote smoothing (5-frame window) ────────────────
+    // ── Strong smoothing: 9-frame majority vote ─────────────────
+    // 9 frames × 1.0s hop = 9s window — enough to lock onto
+    // the real chord and ignore transient misdetections
     const smoothed = [];
     for(let i = 0; i < rawChords.length; i++){
-        const window = rawChords.slice(Math.max(0, i-2), i+3);
+        const lo = Math.max(0, i - 4);
+        const hi = Math.min(rawChords.length, i + 5);
+        const window = rawChords.slice(lo, hi);
         const votes = {};
         for(const x of window){
             if(x) votes[x] = (votes[x]||0) + 1;
@@ -777,11 +781,40 @@ async function serverAnalyzeFile(audioBuffer){
             : rawChords[i]);
     }
 
+    // ── Minimum hold: chord must persist 3+ frames to register ──
+    // This prevents single-frame glitches from appearing in timeline
+    const held = [];
+    let current = smoothed[0] || '', holdCount = 1;
+    held.push(current);
+    for(let i = 1; i < smoothed.length; i++){
+        if(smoothed[i] === current){
+            holdCount++;
+            held.push(current);
+        } else {
+            // New chord candidate — check if it persists for 3+ frames
+            let persist = 1;
+            for(let j = i+1; j < Math.min(i+3, smoothed.length); j++){
+                if(smoothed[j] === smoothed[i]) persist++;
+            }
+            if(persist >= 2){
+                // Accept the new chord
+                current = smoothed[i];
+                holdCount = 1;
+                held.push(current);
+            } else {
+                // Reject — keep current chord
+                held.push(current);
+            }
+        }
+    }
+
+    console.log('[Chunked] Held first 30:', held.slice(0,30).join(' '));
+
     // ── Build timeline (emit on chord change only) ──────────────
     const timeline = [];
     let prev = null;
-    for(let i = 0; i < smoothed.length; i++){
-        const chord = smoothed[i];
+    for(let i = 0; i < held.length; i++){
+        const chord = held[i];
         if(chord && chord !== prev){
             timeline.push({ t: Math.round(i * hopSec * 100) / 100, chord });
             prev = chord;
@@ -790,7 +823,7 @@ async function serverAnalyzeFile(audioBuffer){
 
     setProgress(100);
     console.log(`[Chunked] Timeline: ${timeline.length} changes`);
-    console.log('[Chunked] First 10:', JSON.stringify(timeline.slice(0,10)));
+    console.log('[Chunked] Timeline:', JSON.stringify(timeline.slice(0,20)));
 
     return {
         key: keyLabel,
