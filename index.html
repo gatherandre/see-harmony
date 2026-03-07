@@ -66,7 +66,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v64</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v65</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -641,6 +641,8 @@ async function checkServer(){
         if(serverAvailable){
             console.log('[Server] API online ✓');
             if(el){ el.textContent='● server online'; el.style.color='rgba(100,255,150,0.5)'; }
+            // Warm up librosa on the server (lazy-loaded on first /chord call)
+            warmupServer();
         } else {
             if(el){ el.textContent='○ server offline — JS fallback'; el.style.color='rgba(255,200,100,0.4)'; }
         }
@@ -653,6 +655,28 @@ async function checkServer(){
     serverCheckPending = false;
     })();
     return _serverCheckPromise;
+}
+
+let serverWarmedUp = false;
+async function warmupServer(){
+    if(serverWarmedUp) return;
+    try{
+        console.log('[Server] Warming up librosa…');
+        // Send 0.5s of silence to trigger lazy import of librosa/soundfile
+        const silence = new Float32Array(11025); // 0.5s at 22050Hz
+        const b64 = float32ToWavBase64(silence, 22050);
+        const r = await fetch(API_URL+'/chord', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({audio: b64, sr: 22050, format:'wav'}),
+            signal: AbortSignal.timeout(60000)  // 60s for first load
+        });
+        if(r.ok){
+            serverWarmedUp = true;
+            console.log('[Server] Warmup complete — librosa loaded ✓');
+        }
+    }catch(e){
+        console.warn('[Server] Warmup failed:', e.message);
+    }
 }
 
 function float32ToWavBase64(samples, sr){
@@ -693,6 +717,12 @@ async function serverAnalyzeFile(audioBuffer){
     if(!serverAvailable){ await checkServer(); }
     if(!serverAvailable) throw new Error('Server offline');
 
+    // Wait for librosa warmup if not done yet
+    if(!serverWarmedUp){
+        setStatus('Analysing…','warming up server (first time only)…'); setProgress(2);
+        await warmupServer();
+    }
+
     // ── Resample to 22050Hz mono ────────────────────────────────
     const target = 22050;
     const nSamples = Math.ceil(audioBuffer.duration * target);
@@ -728,7 +758,7 @@ async function serverAnalyzeFile(audioBuffer){
             const r = await fetch(API_URL+'/chord', {
                 method:'POST', headers:{'Content-Type':'application/json'},
                 body: JSON.stringify({audio: b64, sr: target, format:'wav'}),
-                signal: AbortSignal.timeout(15000)
+                signal: AbortSignal.timeout(30000)
             });
             if(r.ok){
                 const data = await r.json();
