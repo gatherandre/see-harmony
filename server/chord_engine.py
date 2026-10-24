@@ -40,6 +40,7 @@ P = dict(
     w_bass=0.6, triad_bias=-0.05, switch=1.6,
     qual_bias={'sus4': -0.08, 'aug': -0.08, 'dim7': -0.04},
     silence_rel=0.02,
+    win_hpss=True, win_hpss_light=True, win_res_type=None,    # microphone windows (analyze_window)
 )
 
 KK_MAJ = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
@@ -66,14 +67,20 @@ def _dictionary(n_bins):
     return midis, D
 
 
-def _salience(y):
-    margin = P['hpss_margin']
+def _salience(y, hpss=True, res_type=None, hpss_light=False):
+    margin = P['hpss_margin'] if hpss else 0
     n_fft = 2048 if len(y) >= 2048 * 2 else 512
-    yh = librosa.effects.harmonic(y, margin=margin, n_fft=n_fft) if margin else y
+    if margin and hpss_light:      # cheaper separation for short windows
+        yh = librosa.effects.harmonic(y, margin=margin, n_fft=1024, hop_length=256, kernel_size=13)
+    elif margin:
+        yh = librosa.effects.harmonic(y, margin=margin, n_fft=n_fft)
+    else:
+        yh = y
     tuning = float(librosa.estimate_tuning(y=yh, sr=SR, bins_per_octave=36)) if len(yh) > SR else 0.0
     n_bins = int(P['n_oct'] * P['bpo'])
+    kw = {'res_type': res_type} if res_type else {}
     C = np.abs(librosa.cqt(yh, sr=SR, hop_length=P['hop'], fmin=librosa.midi_to_hz(P['fmin_midi']),
-                           n_bins=n_bins, bins_per_octave=P['bpo'], tuning=tuning))
+                           n_bins=n_bins, bins_per_octave=P['bpo'], tuning=tuning, **kw))
     k = P['frame_agg']
     if k > 1 and C.shape[1] >= k:
         T = C.shape[1] // k
@@ -197,7 +204,7 @@ def analyze_window(audio, sr):
     y = _prepare(audio, sr)
     if len(y) < SR * 0.25 or float(np.sqrt(np.mean(y ** 2))) < 1e-4:
         return {'chord': '', 'confidence': 0.0, 'chroma': [0.0] * 12}
-    midis, A, _ = _salience(y)
+    midis, A, _ = _salience(y, hpss=P['win_hpss'], res_type=P['win_res_type'], hpss_light=P['win_hpss_light'])
     T, B = _chromas(midis, A)
     S = _scores(T.mean(1, keepdims=True), B.mean(1, keepdims=True))[:-1, 0]
     order = np.argsort(S)[::-1]
