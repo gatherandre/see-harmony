@@ -9,7 +9,7 @@ app = Flask(__name__)
 CORS(app, origins="*")
 app.config['MAX_CONTENT_LENGTH'] = 40 * 1024 * 1024   # 40 MB per request
 
-ENGINE_VERSION = 'v66'
+ENGINE_VERSION = 'v66.1'
 
 # Lazy-load heavy modules to avoid OOM on Render free tier startup
 _sf = None
