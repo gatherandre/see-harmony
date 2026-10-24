@@ -39,7 +39,21 @@ A 1 s window every 0.5 s; "settled" = from 1.5 s after each chord change to the 
 | **Change when two consecutive windows agree (used)** | **0.78** | **1.07–1.11** | **1.5 s** |
 | Decaying evidence accumulation (best setting) | 0.78 | 1.47 | 1.0 s |
 
-Lag excludes network time (≈0.2 s locally; more on the free host).
+Lag excludes network time (≈0.2 s locally; measured ≈0.85 s per request on the free Render host).
+
+### v66.1: lighter analysis for microphone windows
+
+Harmonic–percussive separation took about half of each 1 s window's computing time. Options compared (two-window rule):
+
+| Separation in mic windows | Dev: settled exact-chord | Real recording*: settled agreement | Roots (real) | Time per window (local) |
+|---|---|---|---|---|
+| Full (v66) | 0.775 | 90 % | 98 % | 95 ms |
+| **Lighter: n_fft 1024, kernel 13 (v66.1)** | **0.768** | **89 %** | **98 %** | **67 ms** |
+| None | 0.766 | 82 % | 98 % | 50 ms |
+
+\*"I Miss You All" (4:36, some percussion), compared with the file-mode timeline at moments ≥2.5 s after a chord change. Skipping the separation costs little on the drum-free synthetic set but 8 points on real music, so the lighter version is used. File mode is unchanged.
+
+Also tested and rejected: letting a single high-confidence window change the chord (no reduction in median lag, more flicker).
 
 ## Design decisions tested and rejected (dev set)
 
