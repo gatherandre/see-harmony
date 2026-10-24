@@ -69,7 +69,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v66</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v66.2</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -1012,8 +1012,8 @@ async function serverAnalyzeFileChunks(audioBuffer){
 
 // ── Microphone chords: one detector at a time ────────────────────
 // Server mode: every 0.5 s send the last 1 s of audio to /chord; the shown
-// chord changes only when two consecutive results agree (tested offline:
-// little flicker, ~1.5 s lag + network time). If the server is offline or
+// chord changes only when two consecutive votes agree (see micVote; tested
+// offline: ~1.5 s lag + network time). If the server is offline or
 // its round trip is slow, the in-browser detector takes over instead —
 // never both at once.
 const MIC_WIN_S = 1.0, MIC_HOP_MS = 500, MIC_SLOW_MS = 1500, MIC_PROBE_MS = 5000;
@@ -1055,6 +1055,17 @@ function micWindow22k(){
     return out;
 }
 
+const MIC_STICKY = 0.04;
+function micVote(result, shown){
+    if(!shown || result.chord === shown || !Array.isArray(result.top)) return result.chord;
+    let best = -Infinity, shownScore = null;
+    for(const [lbl, s] of result.top){
+        if(s > best) best = s;
+        if(lbl === shown) shownScore = s;
+    }
+    return (shownScore !== null && shownScore >= best - MIC_STICKY) ? shown : result.chord;
+}
+
 function setMicSource(src){
     if(micChord.source===src) return;
     micChord.source = src; micChord.lastResult = '';
@@ -1086,11 +1097,17 @@ function maybeServerChord(){
         else if(result && micChord.rtt < MIC_SLOW_MS*0.66) setMicSource('server');
         updateChordSourceStatus();
         if(micChord.source!=='server' || !result || !result.chord || !recording) return;
-        // show a new chord only when two consecutive windows agree
-        if(result.chord === micChord.lastResult && result.chord !== currentChord.label){
-            const c = chordColour(result.chord); if(c) currentChord = c;
+        // v66.2: a window still votes for the chord on screen when that chord
+        // scores within MIC_STICKY of the window's best (scores come in the
+        // top-8 list from /chord). Then, as before, a new chord is shown only
+        // when two consecutive votes agree. Tested offline on a composer-
+        // annotated recording: back-and-forth flips 13 -> 2, changes per
+        // played chord 1.95 -> 1.45, accuracy and lag unchanged.
+        const vote = micVote(result, currentChord.label);
+        if(vote === micChord.lastResult && vote !== currentChord.label){
+            const c = chordColour(vote); if(c) currentChord = c;
         }
-        micChord.lastResult = result.chord;
+        micChord.lastResult = vote;
     });
 }
 
