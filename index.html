@@ -51,6 +51,9 @@
         #start-btn{margin-top:28px;padding:13px 48px;font-family:'Cormorant Garamond',serif;font-size:14px;font-weight:400;letter-spacing:0.35em;text-transform:uppercase;color:var(--fg-bright);background:transparent;border:1px solid rgba(255,255,255,0.35);cursor:pointer;transition:all 0.3s;}
         #start-btn:hover{background:rgba(255,255,255,0.07);border-color:rgba(255,255,255,0.65);letter-spacing:0.45em;}
         #error-msg{font-family:'JetBrains Mono',monospace;font-size:11px;color:rgba(255,120,90,0.9);display:none;margin-top:8px;}
+        body.colour-only #pitch-display, body.colour-only #debug, body.colour-only #diag-btn{display:none !important;}
+        #transport.visible ~ #bottom-bar{padding-bottom:120px;}
+        body:not(.debug) #debug, body:not(.debug) #diag-btn{display:none !important;}
     </style>
 </head>
 <body>
@@ -66,11 +69,12 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v65</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v66</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
                 <button class="btn"        id="btn-review" onclick="setMode('review')">Review</button>
+                <button class="btn"        id="btn-colour" onclick="toggleColourOnly()" title="Hide chord names and readouts (C)">Colour only</button>
             </div>
             <div class="btn-group">
                 <button class="btn active" id="btn-mic"  onclick="switchToMic()">⬤ Mic</button>
@@ -104,9 +108,10 @@
             <div id="tension-display">—</div>
         </div>
         <div id="legend">
-            brightness &nbsp;←&nbsp; pitch height<br>
-            saturation &nbsp;←&nbsp; timbre<br>
-            warm → cool &nbsp;←&nbsp; harmonic tension
+            lightness &nbsp;←&nbsp; pitch height<br>
+            colourfulness &nbsp;←&nbsp; timbre<br>
+            cool → warm &nbsp;←&nbsp; harmonic tension<br>
+            orb &nbsp;←&nbsp; chord type
         </div>
     </div>
 </div>
@@ -187,6 +192,21 @@ let micStream=null, micSource=null;
 let fileBuffer=null, fileSource=null, fileStartTime=0;
 let fileOffset=0, fileStartAt=0, filePlaying=false, fileDuration=0;
 
+// ── Options (URL: ?colouronly=1 for study sessions, ?stereo=1 for experimental edges) ──
+const URLP = new URLSearchParams(location.search);
+const SHOW_STEREO = URLP.get('stereo')==='1';
+let colourOnly = URLP.get('colouronly')==='1' || URLP.get('coloronly')==='1';
+try{ if(!URLP.has('colouronly') && !URLP.has('coloronly') && localStorage.getItem('sh-colour-only')==='1') colourOnly=true; }catch(_){}
+function applyColourOnly(){
+    document.body.classList.toggle('colour-only',colourOnly);
+    const b=document.getElementById('btn-colour'); if(b) b.classList.toggle('active',colourOnly);
+}
+function toggleColourOnly(){
+    colourOnly=!colourOnly;
+    try{ localStorage.setItem('sh-colour-only',colourOnly?'1':'0'); }catch(_){}
+    applyColourOnly();
+}
+
 // ── State ────────────────────────────────────────────────────────
 let mode      = 'play';   // 'play' | 'review'
 let recording = false;
@@ -217,7 +237,7 @@ let diatonicSet=[];       // [{root, type}] — allowed chords
 const keyChroma=new Float32Array(12);  // long-term chroma accumulator
 let keyFrames=0;
 let keyLocked=false;      // true once we have enough data to lock the key
-const V={skyH:HUE_WARM,skyS:0.55,skyV:0.45,orbH:HUE_WARM,orbS:0.6,orbV:0.45,orbR:0,glow:0.3};
+const V={skyL:0.30,skyA:0,skyB:-0.05,orbH:HUE_WARM,orbS:0.6,orbV:0.45,orbR:0,glow:0.3};
 let ribbon=[], lastRibMs=0, animPhase=0;
 let cv, cx2, W, H;
 
@@ -234,6 +254,58 @@ function hsvCss(h,s,v,a=1){
     else if(h<180){r=0;g=c;b=x;}else if(h<240){r=0;g=x;b=c;}
     else if(h<300){r=x;g=0;b=c;}else{r=c;g=0;b=x;}
     return`rgba(${(r+m)*255|0},${(g+m)*255|0},${(b+m)*255|0},${a})`;
+}
+// ── OKLab colour (perceptually uniform; Ottosson 2020) ───────────
+function hsvToRgb(h,s,v){
+    h=((h%360)+360)%360;
+    const c=v*s,x=c*(1-Math.abs((h/60)%2-1)),m=v-c;
+    let r,g,b;
+    if(h<60){r=c;g=x;b=0;}else if(h<120){r=x;g=c;b=0;}
+    else if(h<180){r=0;g=c;b=x;}else if(h<240){r=0;g=x;b=c;}
+    else if(h<300){r=x;g=0;b=c;}else{r=c;g=0;b=x;}
+    return [r+m,g+m,b+m];
+}
+function srgbToOklab([r,g,b]){
+    const lin=c=>c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4);
+    r=lin(r);g=lin(g);b=lin(b);
+    const l=Math.cbrt(0.4122214708*r+0.5363325363*g+0.0514459929*b);
+    const m=Math.cbrt(0.2119034982*r+0.6806995451*g+0.1073969566*b);
+    const s=Math.cbrt(0.0883024619*r+0.2817188376*g+0.6299787005*b);
+    return [0.2104542553*l+0.7936177850*m-0.0040720468*s,
+            1.9779984951*l-2.4285922050*m+0.4505937099*s,
+            0.0259040371*l+0.7827717662*m-0.8086757660*s];
+}
+function oklabCss(L,a,b,alpha=1){
+    const l=Math.pow(L+0.3963377774*a+0.2158037573*b,3);
+    const m=Math.pow(L-0.1055613458*a-0.0638541728*b,3);
+    const s=Math.pow(L-0.0894841775*a-1.2914855480*b,3);
+    const enc=c=>{c=Math.max(0,Math.min(1,c));return Math.round(255*(c<=0.0031308?12.92*c:1.055*Math.pow(c,1/2.4)-0.055));};
+    return `rgba(${enc(4.0767416621*l-3.3077115913*m+0.2309699292*s)},${enc(-1.2684380046*l+2.6097574011*m-0.3413193965*s)},${enc(-0.0041960863*l-0.7034186147*m+1.7076147010*s)},${alpha})`;
+}
+// Tension axis anchors (paper Eq. 6): cool = consonant, warm = tense.
+const LAB_COOL = srgbToOklab(hsvToRgb(HUE_COOL,0.70,0.78));
+const LAB_WARM = srgbToOklab(hsvToRgb(HUE_WARM,0.90,0.92));
+const TAU_LO = 0.06, TAU_HI = 0.22;   // observed working range of tonal distance
+
+// ── Chord label → colour (semantic layer) ───────────────────────
+// Every suffix the server or the in-browser detector can return maps to a
+// family in CHORD_MAP; extended chords take the colour of their base family.
+const SUFFIX_FAMILY = {
+    '':'maj','6':'maj','add9':'maj',
+    'm':'min','m6':'min','madd9':'min',
+    '7':'dom7','9':'dom7','11':'dom7','13':'dom7','7b9':'dom7','7#9':'dom7',
+    'maj7':'maj7','maj9':'maj7','maj13':'maj7',
+    'm7':'min7','m9':'min7','m11':'min7','m13':'min7',
+    'm7b5':'m7b5','dim':'dim','dim7':'dim7','aug':'aug',
+    'mM7':'minmaj7','mMaj7':'minmaj7',
+    'sus':'sus','sus2':'sus','sus4':'sus','7sus4':'sus',
+};
+function chordColour(label){
+    if(!label||label==='N') return null;
+    const root = (label.length>1 && (label[1]==='#'||label[1]==='b')) ? label.slice(0,2) : label.slice(0,1);
+    const fam = SUFFIX_FAMILY[label.slice(root.length)];
+    const cm = CHORD_MAP[fam] || {h:HUE_WARM,s:0.6,v:0.5};
+    return {hue:cm.h, sat:cm.s, val:cm.v, label, family:fam||'other'};
 }
 function fmt(s){return Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');}
 function noteHz(hz){if(!hz||hz<20)return'—';const m=Math.round(69+12*Math.log2(hz/440));return NOTES[((m%12)+12)%12]+Math.floor(m/12-1);}
@@ -395,16 +467,7 @@ function detectChord(){
     if(winScore/totalWeight < 0.50) return;  // 50% weighted majority
 
     // Map winner to visual
-    for(let r=0;r<12;r++){
-        for(const type of Object.keys(CHORD_MAP)){
-            if(NOTES[r]+(CHORD_SFX[type]||CHORD_MAP[type].sfx||'')===winner){
-                const cm=CHORD_MAP[type];
-                return {hue:cm.h, sat:cm.s, val:cm.v, label:winner};
-            }
-        }
-    }
-    const cm=CHORD_MAP[bestType]||CHORD_MAP['maj'];
-    return {hue:cm.h, sat:cm.s, val:cm.v, label:winner};
+    return chordColour(winner);
 }
 
 // ── Feature extraction ───────────────────────────────────────────
@@ -507,7 +570,7 @@ function readFeatures(){
     const f0=getPitch(timeData,sr);
     S.pitch=f0>0?ema(S.pitch,f0,0.22):ema(S.pitch,220,ALPHA*0.12);
 
-    // Server-based real-time chord (fires every 1.5s when available)
+    // Server-based real-time chord (one window every 0.5 s when the server is fast enough)
     if(inputMode==='mic' && recording) maybeServerChord();
 
     // Stereo side chroma (simplified — dominant pitch class per side)
@@ -576,7 +639,9 @@ async function startMic(){
         audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false},video:false});
     micSource=audioCtx.createMediaStreamSource(micStream);
     micSource.connect(analyserNode);
+    await attachMicTap(micSource);
     inputMode='mic'; recording=false;
+    micChord.lastResult=''; micChord.inFlight=false;
     resetHarmBuf();
     document.getElementById('rec-btn').style.display='flex';
     document.getElementById('transport').classList.remove('visible');
@@ -634,28 +699,38 @@ async function checkServer(){
     if(serverCheckPending) return _serverCheckPromise;
     serverCheckPending = true;
     _serverCheckPromise = (async()=>{
+    const el = document.getElementById('server-status');
+    // A free-tier server sleeps when idle and can take up to a minute to wake.
+    const slowNote = setTimeout(()=>{ if(el){ el.textContent='◌ waking the analysis server (can take up to a minute)…'; el.style.color='rgba(255,220,150,0.6)'; } }, 3000);
     try{
-        const r = await fetch(API_URL+'/', {signal: AbortSignal.timeout(8000)});
+        const r = await fetch(API_URL+'/', {signal: AbortSignal.timeout(75000)});
         serverAvailable = r.ok;
-        const el = document.getElementById('server-status');
         if(serverAvailable){
             console.log('[Server] API online ✓');
             if(el){ el.textContent='● server online'; el.style.color='rgba(100,255,150,0.5)'; }
-            // Warm up librosa on the server (lazy-loaded on first /chord call)
             warmupServer();
         } else {
-            if(el){ el.textContent='○ server offline — JS fallback'; el.style.color='rgba(255,200,100,0.4)'; }
+            if(el){ el.textContent='○ server offline — in-browser fallback'; el.style.color='rgba(255,200,100,0.4)'; }
         }
     }catch(e){
         serverAvailable = false;
-        console.warn('[Server] API offline — using JS fallback');
-        const el = document.getElementById('server-status');
-        if(el){ el.textContent='○ server offline — JS fallback'; el.style.color='rgba(255,200,100,0.4)'; }
+        console.warn('[Server] API offline — using in-browser fallback');
+        if(el){ el.textContent='○ server offline — in-browser fallback'; el.style.color='rgba(255,200,100,0.4)'; }
     }
+    clearTimeout(slowNote);
     serverCheckPending = false;
     })();
     return _serverCheckPromise;
 }
+
+// Keep the server awake while the page is open (free hosts sleep after ~15 min
+// idle); if it was offline, keep trying so the app recovers by itself.
+setInterval(()=>{
+    if(!audioCtx || document.hidden) return;
+    if(serverAvailable) fetch(API_URL+'/', {signal: AbortSignal.timeout(20000)}).catch(()=>{});
+    else if(!serverCheckPending) checkServer();
+}, 10*60*1000);
+setInterval(()=>{ if(audioCtx && serverAvailable===false && !serverCheckPending && !document.hidden) checkServer(); }, 30000);
 
 let serverWarmedUp = false;
 async function warmupServer(){
@@ -674,12 +749,26 @@ async function warmupServer(){
             serverWarmedUp = true;
             console.log('[Server] Warmup complete — librosa loaded ✓');
         }
+        // also compile the segment path once (first call is slow on a cold server)
+        const noise = new Float32Array(22050*2).map(()=> (Math.random()-0.5)*0.01);
+        const fd = new FormData(); fd.append('file', float32ToWavBlob(noise, 22050), 'warm.wav');
+        fetch(API_URL+'/segment', {method:'POST', body:fd, signal:AbortSignal.timeout(90000)}).catch(()=>{});
     }catch(e){
         console.warn('[Server] Warmup failed:', e.message);
     }
 }
 
+function float32ToWavBlob(samples, sr){
+    return new Blob([float32ToWavBytes(samples, sr)], {type:'audio/wav'});
+}
+
 function float32ToWavBase64(samples, sr){
+    const bytes = float32ToWavBytes(samples, sr);
+    let b=''; for(let i=0;i<bytes.length;i+=0x8000) b+=String.fromCharCode.apply(null, bytes.subarray(i,i+0x8000));
+    return btoa(b);
+}
+
+function float32ToWavBytes(samples, sr){
     const n = samples.length;
     const buf = new ArrayBuffer(44 + n * 2);
     const v = new DataView(buf);
@@ -693,9 +782,7 @@ function float32ToWavBase64(samples, sr){
         const s=Math.max(-1,Math.min(1,samples[i]));
         v.setInt16(off,s<0?s*0x8000:s*0x7FFF,true); off+=2;
     }
-    const bytes = new Uint8Array(buf);
-    let b=''; for(let i=0;i<bytes.length;i++) b+=String.fromCharCode(bytes[i]);
-    return btoa(b);
+    return new Uint8Array(buf);
 }
 
 async function serverDetectChord(samples, sr){
@@ -713,7 +800,68 @@ async function serverDetectChord(samples, sr){
     }catch(e){ return null; }
 }
 
+async function resampleMono22k(audioBuffer){
+    const target = 22050;
+    const offCtx = new OfflineAudioContext(1, Math.ceil(audioBuffer.duration * target), target);
+    const src = offCtx.createBufferSource(); src.buffer = audioBuffer;
+    src.connect(offCtx.destination); src.start(0);
+    return (await offCtx.startRendering()).getChannelData(0);
+}
+
+// File mode (v66): ~30 s segments with 3 s of context on each side go to
+// /segment, which returns a decoded chord timeline; segments are joined by
+// keeping each one's core region. Falls back to the per-window flow on an
+// older server.
 async function serverAnalyzeFile(audioBuffer){
+    if(!serverAvailable){ await checkServer(); }
+    if(!serverAvailable) throw new Error('Server offline');
+    setStatus('Analysing…','preparing audio…'); setProgress(3);
+    const sr = 22050, mono = await resampleMono22k(audioBuffer);
+    const dur = mono.length / sr, CORE = 30, CTX = 3;
+    const nSeg = Math.max(1, Math.ceil(dur / CORE));
+    const timeline = [], chroma = new Float64Array(12);
+    for(let k = 0; k < nSeg; k++){
+        const c0 = k*CORE, c1 = Math.min(dur, c0 + CORE);
+        const s0 = Math.max(0, c0 - CTX), s1 = Math.min(dur, c1 + CTX);
+        const fd = new FormData();
+        fd.append('file', float32ToWavBlob(mono.subarray(Math.floor(s0*sr), Math.floor(s1*sr)), sr), 'segment.wav');
+        setStatus('Analysing…', `section ${k+1} of ${nSeg}`);
+        let r;
+        try{
+            r = await fetch(API_URL+'/segment', {method:'POST', body:fd, signal:AbortSignal.timeout(120000)});
+        }catch(e){ throw new Error('Segment request failed: '+e.message); }
+        if(r.status === 404){
+            console.warn('[File] server has no /segment — using the per-window flow');
+            return serverAnalyzeFileChunks(audioBuffer);
+        }
+        if(!r.ok) throw new Error('Segment analysis failed ('+r.status+')');
+        const data = await r.json();
+        const tl = (data.timeline || []).map(e => ({t: e.t + s0, chord: e.chord}));
+        // label active at the start of the core region, then the changes inside it
+        let atStart = null;
+        for(const e of tl){ if(e.t <= c0 + 1e-6) atStart = e.chord; else break; }
+        if(atStart !== null) timeline.push({t: c0, chord: atStart});
+        for(const e of tl) if(e.t > c0 + 1e-6 && e.t < c1) timeline.push(e);
+        (data.chroma || []).forEach((v,i) => chroma[i] += v * (c1 - c0));
+        setProgress(5 + 90 * (k+1) / nSeg);
+    }
+    // drop silences (keep the previous colour) and merge repeats
+    const merged = [];
+    for(const e of timeline){
+        if(!e.chord || e.chord === 'N') continue;
+        if(merged.length && merged[merged.length-1].chord === e.chord) continue;
+        merged.push({t: Math.round(e.t*100)/100, chord: e.chord});
+    }
+    const tot = chroma.reduce((a,b)=>a+b,0) + 1e-9;
+    const {key, mode} = detectKey(Array.from(chroma, x => x/tot));
+    setProgress(100);
+    console.log(`[Segments] ${nSeg} sections, ${merged.length} chord changes, key ${NOTES[key]}${mode==='min'?' min':''}`);
+    console.log('SUCCESS: timeline has', merged.length, 'changes', JSON.stringify(merged.slice(0,20)));
+    return { key: NOTES[key] + (mode==='min' ? ' min' : ''), timeline: merged, duration: audioBuffer.duration };
+}
+
+// v65 flow, kept for servers without /segment (now with a 3-window vote)
+async function serverAnalyzeFileChunks(audioBuffer){
     if(!serverAvailable){ await checkServer(); }
     if(!serverAvailable) throw new Error('Server offline');
 
@@ -793,13 +941,13 @@ async function serverAnalyzeFile(audioBuffer){
     const keyLabel = NOTES[detKey] + (detMode === 'min' ? ' min' : '');
     console.log(`[Chunked] Key: ${keyLabel}`);
 
-    // ── Strong smoothing: 9-frame majority vote ─────────────────
-    // 9 frames × 1.0s hop = 9s window — enough to lock onto
-    // the real chord and ignore transient misdetections
+    // ── Smoothing: 3-frame majority vote ─────────────────────────
+    // (v65 used 9 frames = 9 s, which erased real chord changes;
+    //  see the evaluation in the paper, Section 7.4)
     const smoothed = [];
     for(let i = 0; i < rawChords.length; i++){
-        const lo = Math.max(0, i - 4);
-        const hi = Math.min(rawChords.length, i + 5);
+        const lo = Math.max(0, i - 1);
+        const hi = Math.min(rawChords.length, i + 2);
         const window = rawChords.slice(lo, hi);
         const votes = {};
         for(const x of window){
@@ -862,31 +1010,87 @@ async function serverAnalyzeFile(audioBuffer){
     };
 }
 
-// Real-time server chord — fires every 1.5s
-let rtLastSend = 0;
-const RT_INTERVAL = 1500;
-function maybeServerChord(){
-    if(!audioCtx || !analyserNode || !serverAvailable) return;
-    const now = Date.now();
-    if(now - rtLastSend < RT_INTERVAL) return;
-    rtLastSend = now;
-    const timeDom = new Float32Array(analyserNode.fftSize);
-    analyserNode.getFloatTimeDomainData(timeDom);
-    serverDetectChord(timeDom, audioCtx.sampleRate).then(result => {
-        if(result && result.chord){
-            const chord = result.chord;
-            let found = false;
-            for(let r=0;r<12&&!found;r++){
-                for(const type of Object.keys(CHORD_MAP)){
-                    if(NOTES[r]+(CHORD_SFX[type]||CHORD_MAP[type].sfx||'')===chord){
-                        const cm=CHORD_MAP[type];
-                        currentChord={hue:cm.h,sat:cm.s,val:cm.v,label:chord};
-                        found=true;break;
-                    }
-                }
-            }
-            if(!found) currentChord={hue:HUE_WARM,sat:0.6,val:0.5,label:chord};
+// ── Microphone chords: one detector at a time ────────────────────
+// Server mode: every 0.5 s send the last 1 s of audio to /chord; the shown
+// chord changes only when two consecutive results agree (tested offline:
+// little flicker, ~1.5 s lag + network time). If the server is offline or
+// its round trip is slow, the in-browser detector takes over instead —
+// never both at once.
+const MIC_WIN_S = 1.0, MIC_HOP_MS = 500, MIC_SLOW_MS = 1500, MIC_PROBE_MS = 5000;
+const micChord = {source:'local', lastResult:'', inFlight:false, lastSend:0, rtt:null, slowCount:0};
+let micRing=null, micRingPos=0, micRingFilled=0, micTapNode=null, micTapSink=null;
+
+async function attachMicTap(src){
+    const n = Math.ceil(audioCtx.sampleRate * MIC_WIN_S);
+    micRing = new Float32Array(n); micRingPos = 0; micRingFilled = 0;
+    const push = (block)=>{
+        for(let i=0;i<block.length;i++){ micRing[micRingPos]=block[i]; micRingPos=(micRingPos+1)%n; }
+        micRingFilled = Math.min(n, micRingFilled + block.length);
+    };
+    if(micTapNode){ try{micTapNode.disconnect();}catch(_){} micTapNode=null; }
+    if(!micTapSink){ micTapSink=audioCtx.createGain(); micTapSink.gain.value=0; micTapSink.connect(audioCtx.destination); }
+    try{
+        if(!attachMicTap.loaded){
+            const code = `class Tap extends AudioWorkletProcessor{process(i){const c=i[0]&&i[0][0];if(c)this.port.postMessage(c.slice(0));return true;}}registerProcessor('sh-tap',Tap);`;
+            const url = URL.createObjectURL(new Blob([code],{type:'application/javascript'}));
+            await audioCtx.audioWorklet.addModule(url);
+            attachMicTap.loaded = true;
         }
+        micTapNode = new AudioWorkletNode(audioCtx,'sh-tap');
+        micTapNode.port.onmessage = e => push(e.data);
+    }catch(err){
+        // Fallback for browsers without AudioWorklet
+        micTapNode = audioCtx.createScriptProcessor(2048,1,1);
+        micTapNode.onaudioprocess = e => push(e.inputBuffer.getChannelData(0));
+    }
+    src.connect(micTapNode); micTapNode.connect(micTapSink);
+}
+
+function micWindow22k(){
+    if(!micRing || micRingFilled < micRing.length*0.9) return null;
+    const n=micRing.length, src=new Float32Array(n);
+    for(let i=0;i<n;i++) src[i]=micRing[(micRingPos+i)%n];
+    const ratio = audioCtx.sampleRate/22050, m = Math.floor(n/ratio), out=new Float32Array(m);
+    for(let i=0;i<m;i++){ const x=i*ratio, k=Math.floor(x), f=x-k; out[i]=src[k]*(1-f)+(src[Math.min(k+1,n-1)]*f); }
+    return out;
+}
+
+function setMicSource(src){
+    if(micChord.source===src) return;
+    micChord.source = src; micChord.lastResult = '';
+    voteBuffer.length = 0;
+    updateChordSourceStatus();
+}
+function updateChordSourceStatus(){
+    const el=document.getElementById('server-status'); if(!el) return;
+    if(inputMode!=='mic') return;
+    if(micChord.source==='server') el.textContent=`● chords: server${micChord.rtt?` (${(micChord.rtt/1000).toFixed(1)} s)`:''}`;
+    else el.textContent = serverAvailable ? '○ chords: in-browser (server slow)' : '○ chords: in-browser (server offline)';
+}
+
+function maybeServerChord(){
+    if(!audioCtx || !serverAvailable || micChord.inFlight) return;
+    const now = Date.now();
+    const interval = micChord.source==='server' ? MIC_HOP_MS : MIC_PROBE_MS;
+    if(now - micChord.lastSend < interval) return;
+    const win = micWindow22k(); if(!win) return;
+    micChord.lastSend = now; micChord.inFlight = true;
+    const t0 = performance.now();
+    serverDetectChord(win, 22050).then(result => {
+        micChord.inFlight = false;
+        const rtt = performance.now() - t0;
+        micChord.rtt = micChord.rtt===null ? rtt : 0.7*micChord.rtt + 0.3*rtt;
+        if(!result){ micChord.slowCount++; }
+        else micChord.slowCount = micChord.rtt > MIC_SLOW_MS ? micChord.slowCount+1 : 0;
+        if(micChord.slowCount >= 3) setMicSource('local');
+        else if(result && micChord.rtt < MIC_SLOW_MS*0.66) setMicSource('server');
+        updateChordSourceStatus();
+        if(micChord.source!=='server' || !result || !result.chord || !recording) return;
+        // show a new chord only when two consecutive windows agree
+        if(result.chord === micChord.lastResult && result.chord !== currentChord.label){
+            const c = chordColour(result.chord); if(c) currentChord = c;
+        }
+        micChord.lastResult = result.chord;
     });
 }
 
@@ -1320,37 +1524,28 @@ function processVisuals(){
     const dim=Math.min(W,H);
     animPhase+=0.0004;
 
-    // Physical layer — sky (full spectrum: pitch→hue, centroid→saturation, brightness→value)
-    // Sky uses a DIFFERENT mapping from the orb so the two layers are visually distinct.
-    // Hue: pitch height sweeps the full spectrum (low=red, mid=green, high=violet)
-    // This is ratio-preserving across the musical octave range.
+    // Physical layer — background field (paper Section 5.4, Eqs. 4–6), in OKLab:
+    //   lightness ← pitch height (log-frequency, E2–E6)
+    //   colourfulness ← spectral centroid (timbral brightness)
+    //   hue ← tonal tension, interpolated from the cool to the warm anchor
     const semi=Math.log2(Math.max(S.pitch,20)/440)*12;
     const pitchT=clamp((semi-SEMI_MIN)/(SEMI_MAX-SEMI_MIN),0,1);
-    const skyH=pitchT*300;                                          // 0°(red)→300°(violet)
-    const skyS=clamp((S.centroid-400)/4600,0.4,1.0);              // timbre → saturation
-    const skyV=clamp(0.25+0.75*pitchT,0.25,1.0);                  // higher=brighter
+    const satT=clamp((S.centroid-400)/4600,0,1);
+    const tenT=clamp((S.tension-TAU_LO)/(TAU_HI-TAU_LO),0,1);
+    const chromaScale=0.35+0.65*satT;
+    const skyL=0.34+0.46*pitchT;
+    const skyA=((1-tenT)*LAB_COOL[1]+tenT*LAB_WARM[1])*chromaScale;
+    const skyB=((1-tenT)*LAB_COOL[2]+tenT*LAB_WARM[2])*chromaScale;
 
     // Semantic layer — chord detection
     if(chordTimeline.length>0 && inputMode==='file'){
-        // FILE MODE: timeline pre-computed offline — accurate, no flickering
+        // FILE MODE: timeline pre-computed by the server — no flicker
         const now=audioCtx.currentTime-fileStartAt;
         let chord=chordTimeline[0].chord;
         for(const entry of chordTimeline){if(entry.t<=now)chord=entry.chord;else break;}
-        if(chord!==currentChord.label){
-            let found=false;
-            for(let r=0;r<12&&!found;r++){
-                for(const type of Object.keys(CHORD_MAP)){
-                    if(NOTES[r]+(CHORD_SFX[type]||CHORD_MAP[type].sfx||'')===chord){
-                        const cm=CHORD_MAP[type];
-                        currentChord={hue:cm.h,sat:cm.s,val:cm.v,label:chord};
-                        found=true;break;
-                    }
-                }
-            }
-            if(!found) currentChord={hue:HUE_WARM,sat:0.6,val:0.5,label:chord};
-        }
-    } else if(hasSignal && harmFilled>=HARM_WIN/3){
-        // MIC MODE: real-time detection
+        if(chord!==currentChord.label){ const c=chordColour(chord); if(c) currentChord=c; }
+    } else if(inputMode==='mic' && micChord.source==='local' && hasSignal && harmFilled>=HARM_WIN/3){
+        // MIC MODE, in-browser detector (only when the server is not in use)
         const detected=detectChord();
         if(detected) currentChord=detected;
     }
@@ -1358,14 +1553,14 @@ function processVisuals(){
     const ambH=(HUE_WARM+Math.sin(animPhase)*20+360)%360;
 
     if(hasSignal){
-        V.skyH=ema(V.skyH,skyH,0.08); V.skyS=ema(V.skyS,skyS,0.08); V.skyV=ema(V.skyV,skyV,0.08);
+        V.skyL=ema(V.skyL,skyL,0.08); V.skyA=ema(V.skyA,skyA,0.06); V.skyB=ema(V.skyB,skyB,0.06);
         V.orbH=ema(V.orbH,currentChord.hue,0.05);
         V.orbS=ema(V.orbS,currentChord.sat,0.05);
         V.orbV=ema(V.orbV,currentChord.val,0.05);
         V.orbR=ema(V.orbR,dim*0.09+S.onset*dim*0.09,0.28);
         V.glow=ema(V.glow,clamp(rms*80,0.25,1.0),0.18);
     } else {
-        V.skyH=ema(V.skyH,ambH,0.003); V.skyS=ema(V.skyS,0.55,0.003); V.skyV=ema(V.skyV,0.45,0.003);
+        V.skyL=ema(V.skyL,0.30,0.003); V.skyA=ema(V.skyA,LAB_COOL[1]*0.5,0.003); V.skyB=ema(V.skyB,LAB_COOL[2]*0.5,0.003);
         V.orbH=ema(V.orbH,ambH,0.003); V.orbS=ema(V.orbS,0.55,0.003); V.orbV=ema(V.orbV,0.45,0.003);
         V.orbR=ema(V.orbR,dim*0.07,0.04); V.glow=ema(V.glow,0.28,0.04);
     }
@@ -1376,7 +1571,8 @@ function draw(ts){
     if(!audioCtx) return;
     processVisuals();
 
-    const {skyH:sh,skyS:ss,skyV:sv,orbH:oh,orbS:os,orbV:ov,orbR:oR,glow:gl}=V;
+    const {skyL:sL,skyA:sA,skyB:sB,orbH:oh,orbS:os,orbV:ov,orbR:oR,glow:gl}=V;
+    const sky=(f,a)=>oklabCss(sL*f,sA*f,sB*f,a);   // darker shade of the background colour
 
     // In Review mode, ribbon takes over — orb shrinks to corner
     const isReview = (mode==='review' && ribbon.length>1);
@@ -1390,31 +1586,34 @@ function draw(ts){
 
     cx2.fillStyle='#050508'; cx2.fillRect(0,0,W,H);
 
-    // Sky
-    const R=Math.min(W,H)*(isReview?0.35:0.9);
+    // Sky — the physical layer fills the whole field, so it stays readable
+    const R=Math.hypot(W,H)*(isReview?0.35:0.62);
     const g1=cx2.createRadialGradient(cx,cy,0,cx,cy,R);
-    g1.addColorStop(0,   hsvCss(sh,ss,sv,      isReview?0.7:0.95));
-    g1.addColorStop(0.3, hsvCss(sh,ss,sv*0.7,  isReview?0.5:0.80));
-    g1.addColorStop(0.7, hsvCss(sh,ss,sv*0.3,  isReview?0.2:0.45));
-    g1.addColorStop(1,   'rgba(5,5,8,0)');
+    if(isReview){
+        g1.addColorStop(0, sky(1.0,0.7)); g1.addColorStop(0.5, sky(0.7,0.35)); g1.addColorStop(1,'rgba(5,5,8,0)');
+    } else {
+        g1.addColorStop(0,   sky(1.0, 1));
+        g1.addColorStop(0.55,sky(0.86,1));
+        g1.addColorStop(1,   sky(0.62,1));
+    }
     cx2.fillStyle=g1; cx2.fillRect(0,0,W,H);
 
     if(!isReview){
         const dr=ts*0.00022;
         const ox=cx+Math.sin(dr)*W*0.06, oy=cy+Math.cos(dr*0.73)*H*0.06;
         const g2=cx2.createRadialGradient(ox,oy,0,ox,oy,R*0.5);
-        g2.addColorStop(0,hsvCss((sh+40)%360,ss*0.6,sv*0.5,0.35));
+        g2.addColorStop(0,sky(1.12,0.25));
         g2.addColorStop(1,'rgba(5,5,8,0)');
         cx2.fillStyle=g2; cx2.fillRect(0,0,W,H);
 
-        // ── Stereo edge fields — only when stereo file playing ────
-        if(isStereo&&analyserL&&analyserR){
+        // ── Stereo edge fields — experimental, off unless ?stereo=1 ────
+        if(SHOW_STEREO&&isStereo&&analyserL&&analyserR){
             // Find dominant pitch class on each side
             const domL=stereoL.indexOf(Math.max(...stereoL));
             const domR=stereoR.indexOf(Math.max(...stereoR));
             // Map pitch class to hue (C=0°, full chromatic circle)
             const hL=(domL/12)*360, hR=(domR/12)*360;
-            const sideV=Math.min(sv*1.2,1.0);
+            const sideV=Math.min(sL*1.2,1.0);
 
             // Left edge — bass register colour bleeds in from left
             const gL=cx2.createLinearGradient(0,0,W*0.38,0);
@@ -1432,11 +1631,11 @@ function draw(ts){
         }
     }
 
-    // Orb halos
-    for(let l=0;l<(isReview?2:4);l++){
-        const lr=(4.2+l*3.5)*rOr, la=(0.14-l*0.028)*gl;
-        const og=cx2.createRadialGradient(cx,cy,rOr*0.2,cx,cy,lr);
-        og.addColorStop(0,hsvCss(oh,os,ov,la*3.0));
+    // Orb halos — kept compact so the background field stays visible
+    for(let l=0;l<(isReview?2:3);l++){
+        const lr=(1.7+l*1.1)*rOr, la=(0.34-l*0.09)*gl;
+        const og=cx2.createRadialGradient(cx,cy,rOr*0.6,cx,cy,lr);
+        og.addColorStop(0,hsvCss(oh,os,ov,la));
         og.addColorStop(1,hsvCss(oh,os,ov,0));
         cx2.fillStyle=og; cx2.beginPath(); cx2.arc(cx,cy,lr,0,Math.PI*2); cx2.fill();
     }
@@ -1456,7 +1655,7 @@ function draw(ts){
     cx2.fillStyle=hl; cx2.beginPath(); cx2.arc(cx-rOr*0.3,cy-rOr*0.3,hlR,0,Math.PI*2); cx2.fill();
 
     // Chord label on orb
-    if(currentChord.label&&gl>0.12&&!isReview){
+    if(currentChord.label&&gl>0.12&&!isReview&&!colourOnly){
         const fs=Math.max(12,rOr*0.28)|0;
         cx2.font=`300 ${fs}px 'JetBrains Mono',monospace`;
         cx2.textAlign='center'; cx2.textBaseline='middle';
@@ -1493,7 +1692,7 @@ function draw(ts){
             cx2.fillStyle=cg; cx2.fillRect(x,ry,sw+0.8,ribbonH);
 
             // Chord labels — show when chord changes
-            if(e.label&&i>0&&ribbon[i-1].label!==e.label&&(1-age)>0.05){
+            if(!colourOnly&&e.label&&i>0&&ribbon[i-1].label!==e.label&&(1-age)>0.05){
                 cx2.save();
                 cx2.font=`300 ${labelFontSize}px 'JetBrains Mono',monospace`;
                 cx2.textAlign='center'; cx2.textBaseline='middle';
@@ -1532,8 +1731,9 @@ function draw(ts){
     // HUD
     if(Math.floor(ts/160)!==Math.floor((ts-16)/160)){
         document.getElementById('note-display').textContent=`♩  ${noteHz(S.pitch)}  (${Math.round(S.pitch)} Hz)`;
-        const tl=S.tension<0.32?'consonant':S.tension<0.52?'neutral':S.tension<0.72?'tense':'dissonant';
-        document.getElementById('tension-display').textContent=`◈  ${tl}  (${Math.round(S.tension*100)}%)`;
+        const tt=clamp((S.tension-TAU_LO)/(TAU_HI-TAU_LO),0,1);   // same scale as the background hue
+        const tl=tt<0.25?'consonant':tt<0.5?'neutral':tt<0.75?'tense':'dissonant';
+        document.getElementById('tension-display').textContent=`◈  ${tl}  (${Math.round(tt*100)}%)`;
         document.getElementById('center-status').style.opacity=
             (S.rms>0.001&&(recording||filePlaying))||isReview?'0':'1';
         // Show top 3 pitch classes from harmSum for diagnostic
@@ -1595,6 +1795,8 @@ function runDiagnostic(){
     console.log('=================================');
 }
 
+applyColourOnly();
+if(URLP.get('debug')==='1') document.body.classList.add('debug');
 cv=document.getElementById('canvas'); cx2=cv.getContext('2d');
 function resize(){W=cv.width=window.innerWidth;H=cv.height=window.innerHeight;}
 resize();
@@ -1604,6 +1806,7 @@ window.addEventListener('keydown',e=>{
     if(e.key==='p'||e.key==='P') setMode('play');
     if(e.key==='v'||e.key==='V') setMode('review');
     if(e.key==='m'||e.key==='M') switchToMic();
+    if(e.key==='c'||e.key==='C') toggleColourOnly();
     if(e.key===' '){e.preventDefault();inputMode==='mic'?toggleRecord():togglePlayPause();}
 });
 </script>

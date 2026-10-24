@@ -1,111 +1,117 @@
 # See Harmony
 **Real-time synesthetic visual feedback for music learning**
 
-A browser application that listens to live or recorded audio and renders a stable, learnable visual field where colour, brightness, and motion reflect the harmonic properties of what you're playing — in real time.
+A browser application that listens to live or recorded music and shows its harmony as colour. A continuous background field follows the sound itself (pitch, timbre, tonal tension); a central orb and a history ribbon follow the chord being played.
 
-Built as part of the **Neural Conservatory** research project at the Media Lab.
+Part of the **Neural Conservatory** research programme.
 
 🔗 **Live app:** [gatherandre.github.io/see-harmony](https://gatherandre.github.io/see-harmony/)
 
 ---
 
-## What it does
+## What you see
 
-See Harmony maps musical harmony to colour in a consistent, learnable way:
+**Background field — physical layer (continuous)**
 
-- **Warm colours (orange/red)** → tension, dissonance, dominant chords
-- **Cool colours (blue/green)** → rest, consonance, tonic chords
-- **Brightness** → signal strength and harmonic clarity
-- **Orb size and motion** → dynamic envelope and resonance
+| Sound | Colour |
+|---|---|
+| Pitch height (E2–E6, log-frequency) | Lightness |
+| Spectral centroid (timbral brightness) | Colourfulness |
+| Tonal tension (distance from the nearest key profile) | Hue, cool → warm |
 
-The orb displays the detected chord name and pulses with the music. A ribbon at the bottom shows chord history over time.
+**Orb and ribbon — semantic layer (chord type)**
 
----
+| Chord | Colour |
+|---|---|
+| Major | gold |
+| Minor | deep blue |
+| Dominant 7th | orange-red |
+| Major 7th | violet |
+| Minor 7th | teal |
+| Half-diminished, diminished, augmented | dark reds and plums |
+| Suspended | yellow-green |
 
-## Modes
-
-### 🎤 Mic mode
-
-Connect a microphone or plug in an instrument. See Harmony listens in real time and updates the visual field as you play. Designed for use in music lessons — students can see the harmonic colour of what they're playing without needing to read notation.
-
-### 📁 File mode
-
-Upload any audio file (MP3, WAV, etc). See Harmony analyses the entire track before playback using a full Python signal processing pipeline (numpy + scipy) running inside a Web Worker via WebAssembly. The correct chord is displayed in sync with the music. No setup required — just upload and play.
-
-**First load takes ~20 seconds** while Python/scipy loads in the background. After that it's cached for the session.
-
----
-
-## Chord detection algorithm
-
-File mode runs a full offline analysis pipeline — the same pipeline as `analyse.py`, running verbatim in the browser:
-
-1. **Zero-phase bandpass filter** (`scipy.signal.filtfilt`, 82–500 Hz) — isolates the harmonic register, removes kick drum and melody. Uses `filtfilt` (forward + backward pass) for zero phase distortion — critical for accurate chroma extraction.
-2. **FFT + chroma extraction** — Hann-windowed `numpy.fft.rfft` maps frequency content to 12 pitch classes
-3. **Key detection** — Krumhansl-Kessler profile correlation sampled across the full track
-4. **Diatonic constraint** — builds a search set of diatonic chords, secondary dominants, and borrowed chords for the detected key
-5. **Bass-anchored root detection** — separate 82–200 Hz filter pass anchors the chord root, eliminating root/fifth confusion
-6. **Majority smoothing** — 5-frame median window (2.5s) eliminates transient noise
-7. **Timeline playback** — pre-computed chord changes displayed in sync with audio
-
-Mic mode uses a real-time version of the same pipeline with a rolling harmonic buffer and Web Audio API filtering.
+Extended chords take the colour of their family (C9 → dominant, Cmaj9 → major 7th). In both layers, red means tension.
 
 ---
 
-## Why Pyodide, and why a Web Worker
+## Modes and options
 
-Early versions (v1–v40) attempted to port the Python analysis pipeline to JavaScript. This turned out to be harder than it looks — not because the algorithm is complex, but because of a subtle difference between browser audio filters and scipy:
+- **Mic** — play into a microphone or plug in an instrument. Chords come from the analysis server (a 1 s window every 0.5 s; the shown chord changes when two windows agree). If the server is offline or slow, an in-browser detector takes over. Only one detector is used at a time.
+- **File** — load an MP3 or WAV. The track is analysed in ~30 s sections before playback, then the chords play back in sync.
+- **Play / Review** — live view, or the enlarged harmonic trace of what was played.
+- **Colour only** (button or key `C`, or `?colouronly=1`) — hides chord names and readouts, so the colours carry the information on their own. Intended for studies and listening exercises.
+- `?stereo=1` — experimental stereo edge colours (off by default).
+- `?debug=1` — developer readout.
 
-Web Audio API `BiquadFilter` nodes process audio **causally** (one forward pass). `scipy.signal.filtfilt` processes audio **zero-phase** (forward pass then backward pass), which doubles the effective filter order and eliminates phase distortion. At low frequencies (82–200 Hz), this phase difference is large enough to shift formant timing by tens of milliseconds, corrupting both the key detection and the bass-root anchoring that distinguishes Cmaj7 from C7.
+Keys: `P` play, `V` review, `M` microphone, `C` colour only, space = record / play-pause.
 
-The solution is to not port the pipeline at all — just run Python in the browser. [Pyodide](https://pyodide.org) runs CPython + numpy + scipy compiled to WebAssembly. The analysis runs in a Web Worker so the UI stays alive during the ~15s processing time for a typical song. The worker is initialised in the background when the user clicks *Begin*, so it's usually ready (or close to it) by the time they pick a file.
+---
+
+## Architecture
+
+```
+browser (index.html)                          server (server/, Flask + librosa)
+  Web Audio capture ──► features every frame
+    pitch, spectral centroid, chroma ──► background field
+  file: 30 s sections (+3 s context) ──► POST /segment ──► chord timeline
+  mic:  last 1 s every 0.5 s         ──► POST /chord   ──► chord + top candidates
+  fallbacks: in-browser detector (mic), Pyodide (file, server offline)
+```
+
+**Chord engine (`server/chord_engine.py`, v66):**
+
+1. Harmonic part of the signal (harmonic–percussive separation)
+2. Tuned constant-Q spectrum, 36 bins per octave, E1 to about C8
+3. Local spectral whitening
+4. Note salience by non-negative least squares against harmonic-series note templates, so a note's overtones are not mistaken for other notes (after Mauch & Dixon's NNLS chroma)
+5. Separate treble and bass chroma
+6. Chord scores: cosine to chord templates plus a bass-root term, over the chord types the colour layer shows
+7. Viterbi decoding with a penalty per chord change
+
+The free hosting tier sleeps when idle. The app waits up to 75 s for it to wake (and says so), pings it every 10 minutes while a page is open, and keeps retrying if it was offline. For classes, open the app a minute or two before you start.
 
 ---
 
-## Tech
+## Accuracy
 
-- Pure HTML/CSS/JS — single file, no build step, no runtime dependencies
-- [Pyodide](https://pyodide.org) v0.26 — CPython + numpy + scipy via WebAssembly, loaded in a Web Worker
-- Web Audio API — mic input, real-time analysis, file playback
-- GitHub Pages — zero-config deployment
+Measured on a synthetic, ground-truth test set: 30 held-out tracks, 20 minutes, random keys and progressions, plucked / piano-like / sustained timbres, strummed / fingerpicked / block playing, with and without melody and noise. Duration-weighted recall (`mir_eval`):
+
+| | Root | Major/minor | Sevenths | Time per audio second |
+|---|---|---|---|---|
+| v65 (per-window detector, 9-window vote) | 58 % | 50 % | 32 % | ~0.3 s |
+| v65 with a 3-window vote | 73 % | 64 % | 43 % | ~0.3 s |
+| **v66 engine** | **93 %** | **89 %** | **81 %** | **0.06 s** |
+
+Settings were tuned only on a separate development set. Known limits: inversions are usually reported with the bass note as root; plucked strings are the hardest timbre (65 % at the sevenths level); real recordings have not yet been tested (GuitarSet is the next step). See [`eval/EVALUATION.md`](eval/EVALUATION.md).
 
 ---
+
+## Running locally
+
+```bash
+cd server && pip install -r requirements.txt && python app.py      # API on :5000
+python -m http.server 8000                                          # app on :8000
+```
+
+On `localhost` the app talks to `http://localhost:5000` automatically.
 
 ## Repository
 
 ```
 see-harmony/
-├── index.html      — the entire app (v41)
-├── analyse.py      — CLI reference implementation
-├── README.md
-└── LICENSE
+├── index.html              — the app
+├── server/
+│   ├── app.py              — Flask API: /chord, /segment, /analyze
+│   ├── chord_engine.py     — v66 chord engine
+│   ├── chord_detector.py   — v65 detector (kept for comparison)
+│   └── render.yaml, requirements.txt
+└── eval/                   — test-set generator and evaluation scripts
 ```
-
----
-
-## analyse.py
-
-`analyse.py` is the reference implementation — the same algorithm that runs inside the browser. Useful for verifying results offline or on slow connections:
-
-```bash
-pip install numpy scipy pydub
-python3 analyse.py mysong.mp3
-```
-
-The Python code embedded in `index.html` is a direct copy of the core analysis logic from this file.
-
----
-
-## Research context
-
-See Harmony is a component of the **Neural Conservatory** — a framework for AI-augmented music pedagogy that uses multimodal representations (harmonic colour fields, latent space trajectories, synesthetic feedback) to make musical structure visible and learnable.
-
-The app is designed for use in guitar and general instrument instruction, where students can connect their instrument directly and receive immediate visual feedback on the harmonic quality of what they're playing.
 
 ---
 
 ## Author
 
-André Guimarães — [gatherandre](https://github.com/gatherandre)  
-Neural Conservatory MVP · 2026  
-MIT License
+André Guimarães — [gatherandre](https://github.com/gatherandre)
+Neural Conservatory · 2026 · MIT License
