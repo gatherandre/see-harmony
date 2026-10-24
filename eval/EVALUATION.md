@@ -55,6 +55,23 @@ Harmonic–percussive separation took about half of each 1 s window's computing 
 
 Also tested and rejected: letting a single high-confidence window change the chord (no reduction in median lag, more flicker).
 
+### v66.2: steadier display of a chord's quality
+
+On a real recording the two-window rule flickered between a chord and its seventh (C ↔ Cmaj7, Em ↔ Em7): 82 displayed changes for 42 played chords, 13 of them flips away from a chord and back again within the same played chord. The synthetic sets barely show this.
+
+Rule chosen (`index.html`: `micVote`; offline: `mic_rules.py`): a window still votes for the chord on screen when that chord's score is within 0.04 of the window's best (scores from the top-8 list `/chord` returns); then the two-window rule as before. The client changed; the server did not.
+
+The criterion was fixed before looking at held-out data: fewest changes on the first half of "I Miss You All", with exact-chord accuracy down by at most 2 points there and on the dev set. Candidates: stricter agreement for same-root changes (3 or 4 windows), this stickiness (0.02–0.15, same-root only or all chords), accumulating quality evidence while the root holds, and pooling scores over 2–4 windows.
+
+| | Song, 2nd half (held out) | Test set (held out, 30 tracks) | Dev set (30 tracks) |
+|---|---|---|---|
+| Two-window rule (v66.1): settled exact / changes per played chord | 0.63 / 2.10 | 0.742 / 1.20 | 0.763 / 1.19 |
+| **Sticky 0.04 + two-window (v66.2)** | **0.62 / 1.38** | **0.736 / 1.13** | **0.750 / 1.07** |
+
+Whole song, against the composer's annotation: displayed changes 82 → 61 (1.95 → 1.45 per played chord), back-and-forth flips 13 → 2, settled exact 0.70 → 0.69 (0.77 → 0.79 with the verse chord scored as Am7, the chord its voicing sounds), major/minor 0.94 both, median lag 1.5 s both. The remaining extra changes are mostly single refinements (C, then Cmaj7 once the seventh is heard). Median lag on the synthetic sets is unchanged at 1.5 s.
+
+The in-browser fallback detector (used only when the server is offline or slow) is unchanged.
+
 ## Design decisions tested and rejected (dev set)
 
 - **Partial bass credit for inversions** (bass on the third or fifth): no gain overall (root 0.916 → 0.907–0.915), so not used.
@@ -69,7 +86,7 @@ Also tested and rejected: letting a single high-confidence window change the cho
 
 ## Limitations
 
-- Synthetic audio only; real recordings (GuitarSet, classroom repertoire) are the next test.
+- Synthetic audio plus one real recording annotated by its composer; more real recordings (GuitarSet, classroom repertoire) are the next test.
 - First-inversion chords are usually reported with the bass note as root.
 - Plucked-string timbres are the weakest condition.
 - The speed figure is from a cloud CPU; the free hosting tier is slower.

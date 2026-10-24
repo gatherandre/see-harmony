@@ -37,7 +37,7 @@ Extended chords take the colour of their family (C9 → dominant, Cmaj9 → majo
 
 ## Modes and options
 
-- **Mic** — play into a microphone or plug in an instrument. Chords come from the analysis server (a 1 s window every 0.5 s; the shown chord changes when two windows agree). If the server is offline or slow, an in-browser detector takes over. Only one detector is used at a time.
+- **Mic** — play into a microphone or plug in an instrument. Chords come from the analysis server (a 1 s window every 0.5 s; the shown chord changes when two windows agree, and a window still counts for the chord on screen when that chord scores almost as well as its best, which stops flicker between a chord and its seventh). If the server is offline or slow, an in-browser detector takes over. Only one detector is used at a time.
 - **File** — load an MP3 or WAV. The track is analysed in ~30 s sections before playback, then the chords play back in sync.
 - **Play / Review** — live view, or the enlarged harmonic trace of what was played.
 - **Colour only** (button or key `C`, or `?colouronly=1`) — hides chord names and readouts, so the colours carry the information on their own. Intended for studies and listening exercises.
