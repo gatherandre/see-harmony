@@ -20,6 +20,14 @@
         .btn:hover{color:var(--fg-bright);background:rgba(255,255,255,0.08);}
         .btn.active{color:var(--fg-bright);background:rgba(255,255,255,0.13);}
         #file-input{display:none;}
+        /* Narrow screens: wordmark above, controls wrap across the full width */
+        @media (max-width:640px){
+            #top-bar{flex-direction:column;align-items:stretch;gap:14px;padding:18px 16px 0;}
+            #controls{align-items:flex-start;}
+            .btn-group{flex-wrap:wrap;}
+            .btn{padding:7px 11px;letter-spacing:0.1em;}
+            #ferro-panel{right:16px;top:auto;bottom:150px;}
+        }
         #rec-btn{display:none;align-items:center;gap:8px;padding:8px 20px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:300;letter-spacing:0.15em;text-transform:uppercase;color:var(--fg-dim);background:rgba(5,5,8,0.92);border:1px solid rgba(255,255,255,0.15);border-radius:2px;cursor:pointer;transition:all 0.2s;pointer-events:all;}
         #rec-btn:hover{color:var(--fg-bright);border-color:rgba(255,255,255,0.35);}
         #rec-btn.recording{color:#ff6b6b;border-color:rgba(255,107,107,0.5);background:rgba(255,107,107,0.08);}
@@ -67,8 +75,6 @@
         #ferro-panel .fp-bar i{display:block;height:100%;width:0;background:rgba(255,255,255,0.6);}
         #ferro-panel .fp-foot{margin-top:9px;display:flex;justify-content:space-between;color:rgba(255,255,255,0.35);}
         #ferro-panel .fp-foot span{cursor:pointer;}
-        #btn-ferro{display:none;}
-        body.ferro-available #btn-ferro{display:inline-block;}
     </style>
 </head>
 <body>
@@ -99,13 +105,13 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v66.2</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v67</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
                 <button class="btn"        id="btn-review" onclick="setMode('review')">Review</button>
                 <button class="btn"        id="btn-colour" onclick="toggleColourOnly()" title="Hide chord names and readouts (C)">Colour only</button>
-                <button class="btn"        id="btn-ferro"  onclick="toggleFerro()" title="Ferrofluid orb, experimental (F)">Ferro</button>
+                <button class="btn"        id="btn-ferro"  onclick="toggleFerro()" title="Orb shape follows the sound's energy and texture (F)">Ferrofluid</button>
             </div>
             <div class="btn-group">
                 <button class="btn active" id="btn-mic"  onclick="switchToMic()">⬤ Mic</button>
@@ -238,7 +244,7 @@ function toggleColourOnly(){
     applyColourOnly();
 }
 
-// ── Ferrofluid orb — experimental, off unless ?ferro=1 or the F key ──
+// ── Ferrofluid orb (v67; on by default — button, F key, or ?ferro=0 to switch off) ──
 // The orb's colour still means the chord; its shape follows the sound's
 // energy and texture, as ferrofluid follows a magnetic field. Below a
 // threshold the orb stays round. Above it, spikes rise on each onset
@@ -249,7 +255,8 @@ const FERRO_SLOTS = 64;   // the 3D orb uses all; the flat fallback the first 32
 const ROUGH_CAL = {flat0:0.01, flatR:0.07, c0:900, cR:3100, r0:0.06, rR:0.12};   // calibrated on soft pad, clean piano, a song mix, distorted rock
 const FERRO_DEFAULTS = {sens:0.5, len:0.55, snap:0.65, melt:0.35, harsh:0.5};
 const FERRO = {
-    on: URLP.get('ferro')==='1',
+    on: true,
+    panel: false,
     p: {...FERRO_DEFAULTS},
     an:null, sink:null, td:null, fd:null, prev:null, big:null,
     loud:0, kick:0, harsh:0, field:0, excite:0, flat:0, rough:0, parts:[0,0,0],
@@ -261,13 +268,17 @@ const FERRO = {
 try{ const s=JSON.parse(localStorage.getItem('sh-ferro-params')||'null');
      if(s) for(const k in FERRO_DEFAULTS) if(typeof s[k]==='number') FERRO.p[k]=s[k]; }catch(_){}
 function saveFerroParams(){ try{ localStorage.setItem('sh-ferro-params',JSON.stringify(FERRO.p)); }catch(_){} }
+// On unless switched off: ?ferro=0 (e.g. for a study session) wins, then the
+// viewer's last choice in this browser.
+try{ if(localStorage.getItem('sh-ferro')==='0') FERRO.on=false; }catch(_){}
+if(URLP.get('ferro')==='0') FERRO.on=false;
+if(URLP.get('ferro')==='1') FERRO.on=true;
 function applyFerro(){
-    document.body.classList.toggle('ferro-tune', FERRO.on && FERRO.panel!==false);
-    if(URLP.has('ferro')) document.body.classList.add('ferro-available');
+    document.body.classList.toggle('ferro-tune', FERRO.on && FERRO.panel);
     const b=document.getElementById('btn-ferro'); if(b) b.classList.toggle('active',FERRO.on);
 }
-function toggleFerro(){ FERRO.on=!FERRO.on; if(FERRO.on) document.body.classList.add('ferro-available'); applyFerro(); }
-function toggleFerroPanel(){ FERRO.panel = FERRO.panel===false; applyFerro(); }
+function toggleFerro(){ FERRO.on=!FERRO.on; try{ localStorage.setItem('sh-ferro',FERRO.on?'1':'0'); }catch(_){} applyFerro(); }
+function toggleFerroPanel(){ FERRO.panel=!FERRO.panel; applyFerro(); }   // T: tuning sliders and meters
 function syncFerroSliders(){
     for(const k in FERRO_DEFAULTS){
         const el=document.getElementById('fp-'+k), v=document.getElementById('fpv-'+k);

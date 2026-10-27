@@ -33,6 +33,18 @@ Part of the **Neural Conservatory** research programme.
 
 Extended chords take the colour of their family (C9 → dominant, Cmaj9 → major 7th). In both layers, red means tension.
 
+**Orb shape — energy and texture (ferrofluid)**
+
+The orb keeps its chord colour, but behaves like ferrofluid in a magnetic field: round when the music is soft, spiky when it is loud and harsh.
+
+| Sound | Shape |
+|---|---|
+| Onsets (spectral flux) | spikes shoot out on each hit, then melt back |
+| Loudness | how long the spikes are and how long they stay up |
+| Harshness (noisiness, brightness, sensory roughness) | how many spikes, and how pointed: rounded swells for clean sounds, needles for distorted ones |
+
+It is drawn in 3D with WebGL: spikes rise all over the sphere, towards the viewer too, except on a smooth patch behind the chord name; at rest it looks exactly like the plain orb. On slow devices it lowers its mesh detail, and falls back to a flat outline if needed.
+
 ---
 
 ## Modes and options
@@ -41,12 +53,11 @@ Extended chords take the colour of their family (C9 → dominant, Cmaj9 → majo
 - **File** — load an MP3 or WAV. The track is analysed in ~30 s sections before playback, then the chords play back in sync.
 - **Play / Review** — live view, or the enlarged harmonic trace of what was played.
 - **Colour only** (button or key `C`, or `?colouronly=1`) — hides chord names and readouts, so the colours carry the information on their own. Intended for studies and listening exercises.
+- **Ferrofluid** (button or key `F`; on by default, `?ferro=0` to start with it off) — the orb's shape layer. The choice is remembered in that browser. `T` shows a tuning panel (sensitivity, spike length, snap on beats, melt-back speed, texture response) with live meters.
 - `?stereo=1` — experimental stereo edge colours (off by default).
 - `?debug=1` — developer readout.
 
-Keys: `P` play, `V` review, `M` microphone, `C` colour only, space = record / play-pause.
-
-**Experimental: ferrofluid orb** (off by default; open the app with `?ferro=1`, or press `F`). The orb keeps its chord colour, but its shape follows the sound's energy and texture: it stays round when the music is soft; spikes shoot out on each onset (spectral flux), grow with loudness, and become more numerous and sharper as the sound gets harsher (noisiness, brightness, sensory roughness), then melt back. It is drawn in 3D with WebGL: spikes rise all over the sphere, towards the viewer too, except on a smooth patch behind the chord name; at rest it looks exactly like the normal orb. On slow devices it lowers its mesh detail, and falls back to a flat outline if needed. `T` shows or hides a tuning panel with live meters; slider settings are remembered in that browser.
+Keys: `P` play, `V` review, `M` microphone, `C` colour only, `F` ferrofluid, `T` ferrofluid tuning, space = record / play-pause.
 
 ---
 
