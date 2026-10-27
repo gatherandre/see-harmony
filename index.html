@@ -54,11 +54,41 @@
         body.colour-only #pitch-display, body.colour-only #debug, body.colour-only #diag-btn{display:none !important;}
         #transport.visible ~ #bottom-bar{padding-bottom:120px;}
         body:not(.debug) #debug, body:not(.debug) #diag-btn{display:none !important;}
+        /* Ferrofluid orb — experimental tuning panel */
+        #ferro-panel{display:none;position:fixed;right:24px;top:96px;width:216px;padding:12px 14px 10px;background:rgba(5,5,8,0.72);border:1px solid rgba(255,255,255,0.12);border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:10px;color:rgba(255,255,255,0.7);z-index:30;pointer-events:all;}
+        body.ferro-tune #ferro-panel{display:block;}
+        body.colour-only #ferro-panel{display:none !important;}
+        #ferro-panel .fp-head{display:flex;justify-content:space-between;align-items:center;letter-spacing:0.2em;text-transform:uppercase;font-size:9px;color:rgba(255,255,255,0.55);margin-bottom:8px;}
+        #ferro-panel .fp-x{cursor:pointer;padding:0 4px;color:rgba(255,255,255,0.5);}
+        #ferro-panel label{display:flex;justify-content:space-between;margin-top:7px;}
+        #ferro-panel input[type=range]{width:100%;margin:3px 0 0;accent-color:#c9c3b8;}
+        #ferro-panel .fp-meters{display:grid;grid-template-columns:52px 1fr;gap:4px 8px;align-items:center;margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.45);}
+        #ferro-panel .fp-bar{height:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden;}
+        #ferro-panel .fp-bar i{display:block;height:100%;width:0;background:rgba(255,255,255,0.6);}
+        #ferro-panel .fp-foot{margin-top:9px;display:flex;justify-content:space-between;color:rgba(255,255,255,0.35);}
+        #ferro-panel .fp-foot span{cursor:pointer;}
+        #btn-ferro{display:none;}
+        body.ferro-available #btn-ferro{display:inline-block;}
     </style>
 </head>
 <body>
 <canvas id="canvas"></canvas>
 <div id="debug"></div>
+<div id="ferro-panel">
+    <div class="fp-head"><span>Ferrofluid</span><span class="fp-x" onclick="toggleFerroPanel()" title="Hide panel (T)">×</span></div>
+    <label>Sensitivity <span id="fpv-sens"></span></label><input type="range" min="0" max="100" id="fp-sens">
+    <label>Spike length <span id="fpv-len"></span></label><input type="range" min="0" max="100" id="fp-len">
+    <label>Snap on beats <span id="fpv-snap"></span></label><input type="range" min="0" max="100" id="fp-snap">
+    <label>Melt-back speed <span id="fpv-melt"></span></label><input type="range" min="0" max="100" id="fp-melt">
+    <label>Texture response <span id="fpv-harsh"></span></label><input type="range" min="0" max="100" id="fp-harsh">
+    <div class="fp-meters">
+        <span>loudness</span><div class="fp-bar"><i id="fpm-loud"></i></div>
+        <span>beat</span><div class="fp-bar"><i id="fpm-kick"></i></div>
+        <span>harshness</span><div class="fp-bar"><i id="fpm-harsh"></i></div>
+        <span>spikes</span><div class="fp-bar"><i id="fpm-field"></i></div>
+    </div>
+    <div class="fp-foot"><span onclick="resetFerroParams()">reset</span><span>F on/off · T panel</span></div>
+</div>
 <button id="diag-btn" onclick="runDiagnostic()" style="display:none;position:fixed;bottom:150px;left:36px;font-family:'JetBrains Mono',monospace;font-size:9px;padding:5px 10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);color:rgba(255,255,255,0.6);cursor:pointer;border-radius:2px;z-index:20;">⬡ diagnose</button>
 <div id="overlay">
     <div id="overlay-title">See Harmony</div>
@@ -75,6 +105,7 @@
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
                 <button class="btn"        id="btn-review" onclick="setMode('review')">Review</button>
                 <button class="btn"        id="btn-colour" onclick="toggleColourOnly()" title="Hide chord names and readouts (C)">Colour only</button>
+                <button class="btn"        id="btn-ferro"  onclick="toggleFerro()" title="Ferrofluid orb, experimental (F)">Ferro</button>
             </div>
             <div class="btn-group">
                 <button class="btn active" id="btn-mic"  onclick="switchToMic()">⬤ Mic</button>
@@ -205,6 +236,188 @@ function toggleColourOnly(){
     colourOnly=!colourOnly;
     try{ localStorage.setItem('sh-colour-only',colourOnly?'1':'0'); }catch(_){}
     applyColourOnly();
+}
+
+// ── Ferrofluid orb — experimental, off unless ?ferro=1 or the F key ──
+// The orb's colour still means the chord; its shape follows the sound's
+// energy and texture, as ferrofluid follows a magnetic field. Below a
+// threshold the orb stays round. Above it, spikes rise on each onset
+// (spectral flux), grow with loudness, and become more numerous and
+// sharper as the sound gets harsher (sensory roughness, after Sethares
+// 1998, plus brightness); when the music softens they melt back.
+const FERRO_SLOTS = 32;
+const ROUGH_CAL = {flat0:0.01, flatR:0.07, c0:900, cR:3100, r0:0.06, rR:0.12};   // calibrated on soft pad, clean piano, a song mix, distorted rock
+const FERRO_DEFAULTS = {sens:0.5, len:0.55, snap:0.65, melt:0.35, harsh:0.5};
+const FERRO = {
+    on: URLP.get('ferro')==='1',
+    p: {...FERRO_DEFAULTS},
+    an:null, sink:null, td:null, fd:null, prev:null, big:null,
+    loud:0, kick:0, harsh:0, field:0, excite:0, flat:0, rough:0, parts:[0,0,0],
+    ceil:-60, fluxAvg:0, fluxPeak:1e-3, lastT:0,
+    amp:new Float32Array(FERRO_SLOTS), w:new Float32Array(FERRO_SLOTS),
+    // golden-angle positions: the first n slots are always spread round the orb
+    ang:Float32Array.from({length:FERRO_SLOTS},(_,k)=>((k*0.6180339887)%1)*Math.PI*2),
+};
+try{ const s=JSON.parse(localStorage.getItem('sh-ferro-params')||'null');
+     if(s) for(const k in FERRO_DEFAULTS) if(typeof s[k]==='number') FERRO.p[k]=s[k]; }catch(_){}
+function saveFerroParams(){ try{ localStorage.setItem('sh-ferro-params',JSON.stringify(FERRO.p)); }catch(_){} }
+function applyFerro(){
+    document.body.classList.toggle('ferro-tune', FERRO.on && FERRO.panel!==false);
+    if(URLP.has('ferro')) document.body.classList.add('ferro-available');
+    const b=document.getElementById('btn-ferro'); if(b) b.classList.toggle('active',FERRO.on);
+}
+function toggleFerro(){ FERRO.on=!FERRO.on; if(FERRO.on) document.body.classList.add('ferro-available'); applyFerro(); }
+function toggleFerroPanel(){ FERRO.panel = FERRO.panel===false; applyFerro(); }
+function syncFerroSliders(){
+    for(const k in FERRO_DEFAULTS){
+        const el=document.getElementById('fp-'+k), v=document.getElementById('fpv-'+k);
+        if(el) el.value=Math.round(FERRO.p[k]*100); if(v) v.textContent=Math.round(FERRO.p[k]*100);
+    }
+}
+function resetFerroParams(){ FERRO.p={...FERRO_DEFAULTS}; saveFerroParams(); syncFerroSliders(); }
+function initFerroPanel(){
+    for(const k in FERRO_DEFAULTS){
+        const el=document.getElementById('fp-'+k); if(!el) continue;
+        el.addEventListener('input',()=>{ FERRO.p[k]=el.value/100; document.getElementById('fpv-'+k).textContent=el.value; saveFerroParams(); });
+    }
+    syncFerroSliders(); applyFerro();
+}
+
+function ensureFerroAnalyser(){
+    if(FERRO.an || !audioCtx || !analyserNode) return;
+    // A small, unsmoothed analyser for onsets; the main one (16384 points,
+    // smoothing 0.85) is too slow to catch a drum hit. It hangs off the main
+    // analyser, which passes audio through, into a silent sink.
+    FERRO.an=audioCtx.createAnalyser(); FERRO.an.fftSize=2048; FERRO.an.smoothingTimeConstant=0;
+    FERRO.sink=audioCtx.createGain(); FERRO.sink.gain.value=0;
+    analyserNode.connect(FERRO.an); FERRO.an.connect(FERRO.sink); FERRO.sink.connect(audioCtx.destination);
+    FERRO.td=new Float32Array(FERRO.an.fftSize);
+    FERRO.fd=new Float32Array(FERRO.an.frequencyBinCount);
+    FERRO.prev=new Float32Array(FERRO.an.frequencyBinCount).fill(-100);
+    FERRO.big=new Float32Array(analyserNode.frequencyBinCount);
+}
+
+// Sensory roughness of the strongest spectral peaks (Plomp–Levelt curve as
+// parameterised by Sethares), normalised by their energy: about 0 for a pure
+// tone or a clean consonant chord, higher for beating, distortion and noise.
+function ferroRoughness(){
+    const fd=FERRO.big, sr=audioCtx.sampleRate, bHz=sr/analyserNode.fftSize;
+    analyserNode.getFloatFrequencyData(fd);
+    const lo=Math.max(2,Math.floor(60/bHz)), hi=Math.min(fd.length-3,Math.floor(5000/bHz));
+    const pk=[];
+    for(let i=lo;i<hi;i++){
+        const d=fd[i];
+        if(d>-75 && d>fd[i-1] && d>=fd[i+1] && d>fd[i-2] && d>=fd[i+2]) pk.push([d,i*bHz]);
+    }
+    if(pk.length<2) return 0;
+    pk.sort((a,b)=>b[0]-a[0]); const top=pk.slice(0,24);
+    let num=0, den=0;
+    for(let i=0;i<top.length;i++){
+        const ai=Math.pow(10,top[i][0]/20); den+=ai*ai;
+        for(let j=i+1;j<top.length;j++){
+            const aj=Math.pow(10,top[j][0]/20);
+            const f1=Math.min(top[i][1],top[j][1]), df=Math.abs(top[i][1]-top[j][1]);
+            const s=0.24/(0.0207*f1+18.96);
+            num+=ai*aj*(Math.exp(-3.5*s*df)-Math.exp(-5.75*s*df));
+        }
+    }
+    return den>0 ? num/den : 0;
+}
+
+function updateFerro(){
+    ensureFerroAnalyser(); if(!FERRO.an) return;
+    const now=performance.now(), dt=FERRO.lastT?clamp((now-FERRO.lastT)/1000,0.001,0.1):1/60; FERRO.lastT=now;
+    const k60=a=>1-Math.pow(1-a,dt*60);           // per-frame rate at 60 fps → this frame
+    const P=FERRO.p, an=FERRO.an, td=FERRO.td, fd=FERRO.fd, prev=FERRO.prev;
+    an.getFloatTimeDomainData(td); an.getFloatFrequencyData(fd);
+
+    // Loudness, relative to the loudest recent level but never above an
+    // absolute ceiling, so a quiet room does not read as loud
+    let s=0; for(let i=0;i<td.length;i++) s+=td[i]*td[i];
+    const db=20*Math.log10(Math.sqrt(s/td.length)+1e-9);
+    FERRO.ceil=Math.max(db, FERRO.ceil-0.4*dt);    // forgets ~0.4 dB per second
+    const ceil=Math.max(FERRO.ceil, -8-20*P.sens);   // until something louder is heard, ~-18 dBFS counts as loud
+    const loudT=clamp((db-(ceil-26))/26,0,1);
+    FERRO.loud+= (loudT-FERRO.loud)*k60(loudT>FERRO.loud?0.5:0.12);
+
+    // Onsets: positive spectral flux in dB, against its own running level
+    const bHz=audioCtx.sampleRate/an.fftSize, top=Math.min(fd.length,Math.floor(9000/bHz));
+    let flux=0;
+    for(let i=2;i<top;i++){ const v=Math.max(fd[i],-90); const d=v-prev[i]; if(d>0) flux+=d; prev[i]=v; }
+    flux/=top;
+    FERRO.fluxAvg+= (flux-FERRO.fluxAvg)*k60(0.03);
+    FERRO.fluxPeak=Math.max(flux, FERRO.fluxPeak*Math.pow(0.5,dt/4), 1e-3);  // peak halves every 4 s
+    const kickRaw=clamp((flux-1.4*FERRO.fluxAvg)/(FERRO.fluxPeak-FERRO.fluxAvg+1e-6),0,1)*clamp((loudT-0.08)/0.25,0,1);
+    FERRO.kick=Math.max(kickRaw, FERRO.kick*Math.pow(0.86,dt*60));
+
+    // Harshness: noisiness (spectral flatness: distortion, cymbals, snare),
+    // brightness, and roughness
+    let lnSum=0, linSum=0, nb=0;
+    for(let i=Math.floor(200/bHz);i<top;i++){ const pw=Math.pow(10,Math.max(fd[i],-90)/10); lnSum+=Math.log(pw); linSum+=pw; nb++; }
+    const flat=nb? Math.exp(lnSum/nb)/(linSum/nb+1e-20) : 0;
+    FERRO.flat+= (flat-FERRO.flat)*k60(0.05);
+    FERRO.rough+= (ferroRoughness()-FERRO.rough)*k60(0.05);
+    const noisy=clamp((FERRO.flat-ROUGH_CAL.flat0)/ROUGH_CAL.flatR,0,1);
+    const bright=clamp((S.centroid-ROUGH_CAL.c0)/ROUGH_CAL.cR,0,1);
+    const rough=clamp((FERRO.rough-ROUGH_CAL.r0)/ROUGH_CAL.rR,0,1);
+    FERRO.parts=[noisy,bright,rough];
+    FERRO.harsh+= ((0.45*noisy+0.35*bright+0.20*rough)-FERRO.harsh)*k60(0.04);
+
+    // Field: loudness holds the spikes up, onsets throw them out
+    const field=clamp(0.62*FERRO.loud + (0.35+0.65*P.snap)*FERRO.kick*(0.35+0.65*FERRO.loud),0,1.4);
+    FERRO.field=field;
+    const thr=0.62-0.42*P.sens;
+    const excite=clamp((field-thr)/(1-thr),0,1.3);
+    FERRO.excite=excite;
+    const hEff=clamp(FERRO.harsh*(0.4+1.4*P.harsh),0,1);
+    FERRO.hEff=hEff;
+    const count=5+hEff*(FERRO_SLOTS-5);
+    const att=k60(0.25+0.65*P.snap), rel=k60(0.012+0.16*P.melt), t=now/1000;
+    for(let k=0;k<FERRO_SLOTS;k++){
+        FERRO.w[k]+= (clamp(count-k,0,1)-FERRO.w[k])*k60(0.05);
+        const vary=0.72+0.28*Math.sin(t*1.3+k*2.39);        // each spike breathes a little differently
+        const target=excite*FERRO.w[k]*vary;
+        FERRO.amp[k]+= (target-FERRO.amp[k])*(target>FERRO.amp[k]?att:rel);
+    }
+    if(Math.floor(now/100)!==Math.floor((now-dt*1000)/100)){
+        const m=(id,v)=>{const e=document.getElementById(id); if(e) e.style.width=Math.round(clamp(v,0,1)*100)+'%';};
+        m('fpm-loud',FERRO.loud); m('fpm-kick',FERRO.kick); m('fpm-harsh',FERRO.harsh); m('fpm-field',excite);
+    }
+}
+
+// The orb's outline as a radius per angle: a slow liquid wobble plus one
+// peak per active spike, rounded for clean sounds and pointed for harsh ones.
+function drawFerroOrb(cx,cy,rOr,oh,os,ov,gl,ts){
+    const P=FERRO.p, t=ts/1000, sharp=clamp((FERRO.hEff||0)*1.15,0,1);
+    const L=(0.35+1.35*P.len)*rOr, rot=t*0.045;
+    const width=0.42-0.30*sharp;
+    const N=320, pts=new Float32Array(N*2);
+    let rMax=rOr;
+    const act=[]; for(let k=0;k<FERRO_SLOTS;k++) if(FERRO.amp[k]>0.003) act.push(k);
+    const wob=rOr*(0.006+0.022*FERRO.loud);
+    for(let i=0;i<N;i++){
+        const th=i/N*Math.PI*2;
+        let r=rOr + wob*(Math.sin(3*th+1.7*t)+0.6*Math.sin(5*th-1.1*t)+0.4*Math.sin(2*th+0.5*t));
+        for(const k of act){
+            let d=Math.abs(th-(FERRO.ang[k]+rot)%(Math.PI*2)); if(d>Math.PI) d=Math.PI*2-d;
+            const u=d/width; if(u>=1) continue;
+            const round=0.5*(1+Math.cos(Math.PI*u)), point=Math.pow(1-u,1.9);
+            r+=FERRO.amp[k]*L*(round+(point-round)*sharp);
+        }
+        pts[2*i]=cx+Math.cos(th)*r; pts[2*i+1]=cy+Math.sin(th)*r; if(r>rMax) rMax=r;
+    }
+    cx2.beginPath(); cx2.moveTo(pts[0],pts[1]);
+    for(let i=1;i<N;i++) cx2.lineTo(pts[2*i],pts[2*i+1]);
+    cx2.closePath();
+    // glossy body: same chord colour, darker and denser towards the spike tips
+    const e=rOr/rMax;
+    const g=cx2.createRadialGradient(cx-rOr*0.32,cy-rOr*0.32,rOr*0.03,cx,cy,rMax);
+    g.addColorStop(0,         hsvCss(oh,os*0.4,Math.min(ov*1.6,1),0.98));
+    g.addColorStop(0.45*e,    hsvCss(oh,os,ov,0.96));
+    g.addColorStop(e,         hsvCss(oh,os,ov*0.62,0.92));
+    g.addColorStop(1,         hsvCss(oh,Math.min(os*1.1,1),ov*0.38,0.9));
+    cx2.fillStyle=g; cx2.fill();
+    cx2.lineWidth=1.2; cx2.strokeStyle=hsvCss(oh,os*0.25,1,0.10+0.12*gl); cx2.stroke();
 }
 
 // ── State ────────────────────────────────────────────────────────
@@ -1537,6 +1750,7 @@ function setStatus(t,s){
 // ── Visual processing ────────────────────────────────────────────
 function processVisuals(){
     readFeatures();
+    if(FERRO.on) updateFerro();
     const rms=S.rms, hasSignal=rms>0.0005;
     const dim=Math.min(W,H);
     animPhase+=0.0004;
@@ -1657,12 +1871,16 @@ function draw(ts){
         cx2.fillStyle=og; cx2.beginPath(); cx2.arc(cx,cy,lr,0,Math.PI*2); cx2.fill();
     }
 
-    // Orb body
-    const ob=cx2.createRadialGradient(cx-rOr*0.32,cy-rOr*0.32,rOr*0.03,cx,cy,rOr);
-    ob.addColorStop(0,    hsvCss(oh,os*0.4,Math.min(ov*1.6,1),0.98));
-    ob.addColorStop(0.45, hsvCss(oh,os,ov,0.95));
-    ob.addColorStop(1,    hsvCss(oh,os,ov*0.5,0.38));
-    cx2.fillStyle=ob; cx2.beginPath(); cx2.arc(cx,cy,rOr,0,Math.PI*2); cx2.fill();
+    // Orb body (ferrofluid shape when that experiment is on)
+    if(FERRO.on && FERRO.an){
+        drawFerroOrb(cx,cy,rOr,oh,os,ov,gl,ts);
+    } else {
+        const ob=cx2.createRadialGradient(cx-rOr*0.32,cy-rOr*0.32,rOr*0.03,cx,cy,rOr);
+        ob.addColorStop(0,    hsvCss(oh,os*0.4,Math.min(ov*1.6,1),0.98));
+        ob.addColorStop(0.45, hsvCss(oh,os,ov,0.95));
+        ob.addColorStop(1,    hsvCss(oh,os,ov*0.5,0.38));
+        cx2.fillStyle=ob; cx2.beginPath(); cx2.arc(cx,cy,rOr,0,Math.PI*2); cx2.fill();
+    }
 
     // Specular
     const hlR=rOr*0.42;
@@ -1813,6 +2031,7 @@ function runDiagnostic(){
 }
 
 applyColourOnly();
+initFerroPanel();
 if(URLP.get('debug')==='1') document.body.classList.add('debug');
 cv=document.getElementById('canvas'); cx2=cv.getContext('2d');
 function resize(){W=cv.width=window.innerWidth;H=cv.height=window.innerHeight;}
@@ -1824,6 +2043,8 @@ window.addEventListener('keydown',e=>{
     if(e.key==='v'||e.key==='V') setMode('review');
     if(e.key==='m'||e.key==='M') switchToMic();
     if(e.key==='c'||e.key==='C') toggleColourOnly();
+    if(e.key==='f'||e.key==='F') toggleFerro();
+    if((e.key==='t'||e.key==='T') && FERRO.on) toggleFerroPanel();
     if(e.key===' '){e.preventDefault();inputMode==='mic'?toggleRecord():togglePlayPause();}
 });
 </script>
