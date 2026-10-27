@@ -582,18 +582,22 @@ function ferroMesh(level){
     FERRO3D.ib=gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,FERRO3D.ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,mesh.idx,gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
     FERRO3D.nIdx=mesh.idx.length; FERRO3D.idxType=mesh.idx instanceof Uint32Array?gl.UNSIGNED_INT:gl.UNSIGNED_SHORT;
-    FERRO3D.level=level; FERRO3D.perf={last:0,acc:0,n:0};
+    FERRO3D.level=level; FERRO3D.perf={last:0,acc:0,n:0,since:0,slow:0};
 }
 // If frames get slow (under ~35 fps over two seconds), use a lighter mesh;
 // if the lightest is still slow, fall back to the flat orb.
 function ferroWatchSpeed(){
     if(FERRO3D.fixed) return;
     const P=FERRO3D.perf, now=performance.now(), dt=now-P.last; P.last=now;
-    if(dt<=0 || dt>1000){ P.acc=0; P.n=0; return; }       // paused tab or first frame
+    if(!P.since) P.since=now;
+    if(now-P.since<3000) return;                            // let shaders and buffers settle first
+    if(dt<=0 || dt>1000){ P.acc=0; P.n=0; return; }       // paused tab
     P.acc+=dt; P.n++;
     if(P.acc<2000) return;                                  // judge over ~2 s
     const avg=P.acc/P.n; P.acc=0; P.n=0;
-    if(avg<=28) return;
+    if(avg<=28){ P.slow=0; return; }
+    if(++P.slow<2) return;                                  // two slow periods in a row
+    P.slow=0;
     if(FERRO3D.level>4){ ferroMesh(FERRO3D.level-1); console.log(`[Ferro] frames slow (${avg.toFixed(0)} ms): mesh detail ${FERRO3D.level}`); }
     else { FERRO3D.ok=false; console.log('[Ferro] frames still slow: using the flat orb'); }
 }
