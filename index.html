@@ -245,7 +245,7 @@ function toggleColourOnly(){
 // (spectral flux), grow with loudness, and become more numerous and
 // sharper as the sound gets harsher (sensory roughness, after Sethares
 // 1998, plus brightness); when the music softens they melt back.
-const FERRO_SLOTS = 32;
+const FERRO_SLOTS = 64;   // the 3D orb uses all; the flat fallback the first 32
 const ROUGH_CAL = {flat0:0.01, flatR:0.07, c0:900, cR:3100, r0:0.06, rR:0.12};   // calibrated on soft pad, clean piano, a song mix, distorted rock
 const FERRO_DEFAULTS = {sens:0.5, len:0.55, snap:0.65, melt:0.35, harsh:0.5};
 const FERRO = {
@@ -371,7 +371,7 @@ function updateFerro(){
     FERRO.excite=excite;
     const hEff=clamp(FERRO.harsh*(0.4+1.4*P.harsh),0,1);
     FERRO.hEff=hEff;
-    const count=5+hEff*(FERRO_SLOTS-5);
+    const count = FERRO3D.ok ? 14+hEff*(FERRO_SLOTS-14) : 5+hEff*(32-5);   // spikes over the whole sphere vs. round the outline
     const att=k60(0.25+0.65*P.snap), rel=k60(0.012+0.16*P.melt), t=now/1000;
     for(let k=0;k<FERRO_SLOTS;k++){
         FERRO.w[k]+= (clamp(count-k,0,1)-FERRO.w[k])*k60(0.05);
@@ -385,15 +385,16 @@ function updateFerro(){
     }
 }
 
-// The orb's outline as a radius per angle: a slow liquid wobble plus one
-// peak per active spike, rounded for clean sounds and pointed for harsh ones.
+// Flat fallback (no WebGL): the orb's outline as a radius per angle, a slow
+// liquid wobble plus one peak per active spike, rounded for clean sounds and
+// pointed for harsh ones.
 function drawFerroOrb(cx,cy,rOr,oh,os,ov,gl,ts){
     const P=FERRO.p, t=ts/1000, sharp=clamp((FERRO.hEff||0)*1.15,0,1);
     const L=(0.35+1.35*P.len)*rOr, rot=t*0.045;
     const width=0.42-0.30*sharp;
     const N=320, pts=new Float32Array(N*2);
     let rMax=rOr;
-    const act=[]; for(let k=0;k<FERRO_SLOTS;k++) if(FERRO.amp[k]>0.003) act.push(k);
+    const act=[]; for(let k=0;k<32;k++) if(FERRO.amp[k]>0.003) act.push(k);
     const wob=rOr*(0.006+0.022*FERRO.loud);
     for(let i=0;i<N;i++){
         const th=i/N*Math.PI*2;
@@ -418,6 +419,229 @@ function drawFerroOrb(cx,cy,rOr,oh,os,ov,gl,ts){
     g.addColorStop(1,         hsvCss(oh,Math.min(os*1.1,1),ov*0.38,0.9));
     cx2.fillStyle=g; cx2.fill();
     cx2.lineWidth=1.2; cx2.strokeStyle=hsvCss(oh,os*0.25,1,0.10+0.12*gl); cx2.stroke();
+}
+
+// ── Ferrofluid orb in 3D (WebGL) ─────────────────────────────────
+// A finely divided sphere whose surface rises into spikes spread over the
+// whole orb — towards the viewer too — lit like the normal orb (key light
+// from the upper left), with normals computed per pixel so each spike
+// catches its own highlight. The spike field turns slowly; spikes that
+// turn to face the viewer sink back where the chord name is shown.
+// Rendered off screen and drawn into the main canvas.
+const FERRO3D = {ok:null, gl:null, cv:null, prog:null, u:{}, nIdx:0, idxType:0, S:0, level:0, fixed:false, perf:{last:0,acc:0,n:0}, vb:null, ib:null,
+                 sp:new Float32Array(FERRO_SLOTS*4),
+                 // well-spread directions in any prefix (R2 sequence mapped to the sphere)
+                 base:Array.from({length:FERRO_SLOTS},(_,k)=>{
+                     const u=(0.5+k*0.7548776662)%1, v=(0.5+k*0.5698402910)%1, z=1-2*u, r=Math.sqrt(1-z*z), ph=2*Math.PI*v;
+                     return [r*Math.cos(ph), r*Math.sin(ph), z]; })};
+
+const FERRO_GLSL_COMMON = `
+#define NS ${FERRO_SLOTS}
+uniform vec4 u_sp[NS];
+uniform float u_w, u_cosw, u_sharp, u_p, u_len, u_wob, u_t;
+const float PI = 3.14159265;
+const vec3 W1 = vec3(0.3487, 0.8137, 0.4650), W2 = vec3(-0.7071, 0.1414, 0.6928), W3 = vec3(0.5345, -0.2673, 0.8018);
+// radius of the surface in direction u (unit sphere = 1) and its tangential gradient
+float ferroSurf(vec3 u, out vec3 grad){
+    float a1 = 3.0*dot(u,W1) + 1.7*u_t, a2 = 5.0*dot(u,W2) - 1.1*u_t, a3 = 2.0*dot(u,W3) + 0.5*u_t;
+    float r = 1.0 + u_wob*(sin(a1) + 0.6*sin(a2) + 0.4*sin(a3));
+    vec3 gw = u_wob*(3.0*cos(a1)*W1 + 3.0*0.6*cos(a2)*W2 + 2.0*0.4*cos(a3)*W3);
+    grad = gw - dot(gw,u)*u;
+    for (int i = 0; i < NS; i++) {
+        vec4 s = u_sp[i];
+        if (s.w < 0.002) continue;
+        float c = dot(u, s.xyz);
+        if (c <= u_cosw) continue;
+        float th = acos(min(c, 1.0)), t = th / u_w;
+        float om = max(1.0 - t, 1e-4);
+        float fr = 0.5*(1.0 + cos(PI*t)), fp = pow(om, u_p);
+        float dfr = -0.5*PI*sin(PI*t),   dfp = -u_p*pow(om, u_p - 1.0);
+        float A = s.w * u_len;
+        r += A * mix(fr, fp, u_sharp);
+        vec3 tang = s.xyz - c*u;
+        grad += A * (mix(dfr, dfp, u_sharp)/u_w) * (-tang / max(length(tang), 1e-4));
+    }
+    return r;
+}`;
+const FERRO_VS = `
+precision highp float;
+attribute vec3 a_dir;
+uniform mat4 u_proj;
+uniform float u_camd;
+varying vec3 v_dir;
+varying vec3 v_pos;
+${FERRO_GLSL_COMMON}
+void main(){
+    vec3 u = normalize(a_dir), g;
+    vec3 p = u * ferroSurf(u, g);
+    v_dir = u; v_pos = p;
+    gl_Position = u_proj * vec4(p.xy, p.z - u_camd, 1.0);
+}`;
+const FERRO_FS = `
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+varying vec3 v_dir;
+varying vec3 v_pos;
+uniform float u_camd, u_glow, u_glint;
+uniform vec3 u_c0, u_c1, u_c2;     // the normal orb's gradient: highlight, body, rim
+${FERRO_GLSL_COMMON}
+// parameter of the normal orb's two-circle gradient at point p of the unit disc
+float orbGrad(vec2 p){
+    vec2 o = vec2(-0.32, 0.32), q = p - o, d = -o;
+    float A = dot(d, d) - 0.9409, B = dot(q, d) + 0.0291, C = dot(q, q) - 0.0009;
+    return clamp((B - sqrt(max(B*B - A*C, 0.0))) / A, 0.0, 1.0);
+}
+void main(){
+    vec3 u = normalize(v_dir), g;
+    float r = ferroSurf(u, g);
+    vec3 N = normalize(u - g / r);
+    vec3 V = normalize(vec3(0.0, 0.0, u_camd) - v_pos);
+    // The normal orb is a two-circle radial gradient (highlight circle at the
+    // upper left, outer circle = the orb). Evaluated on the direction each
+    // point faces, it reproduces that orb exactly when there are no spikes,
+    // and shades every spike by how it is turned.
+    // Colour follows the facing direction; transparency follows the position
+    // on the orb, so only the orb's own rim is see-through (a spike pointing
+    // at the viewer must not show the background through its sides).
+    float tg = orbGrad(N.xy), ta = orbGrad(u.xy);
+    vec3 col = tg < 0.45 ? mix(u_c0, u_c1, tg/0.45) : mix(u_c1, u_c2, (tg-0.45)/0.55);
+    float a  = ta < 0.45 ? mix(0.98, 0.95, ta/0.45) : mix(0.95, 0.38, (ta-0.45)/0.55);
+    // the normal orb's soft white highlight
+    float hs = u_glow * 0.22 * clamp(1.0 - length(N.xy - vec2(-0.30, 0.30)) / 0.42, 0.0, 1.0);
+    col = col*(1.0 - hs) + vec3(hs); a = a + hs*(1.0 - a);
+    // what only a 3D surface has: spikes denser towards their tips, a touch of
+    // directional light on their flanks, and a small sharp glint
+    float tip = clamp((r - 1.0) / max(u_len, 0.05), 0.0, 1.0);
+    vec3 L = normalize(vec3(-0.55, 0.62, 0.56));
+    float ndl = max(dot(N, L), 0.0), nh = max(dot(N, normalize(L + V)), 0.0);
+    col *= mix(1.0, 0.70, tip) * (0.90 + 0.16*ndl);
+    col += u_glint * pow(nh, 140.0) * vec3(1.0);
+    a = mix(a, 0.92, smoothstep(0.0, 0.25, tip));      // spikes read as liquid, not glow
+    gl_FragColor = vec4(min(col, 1.0) * a, a);
+}`;
+
+function icosphere(sub){
+    const t=(1+Math.sqrt(5))/2, V=[], nrm=v=>{const l=Math.hypot(v[0],v[1],v[2]); return [v[0]/l,v[1]/l,v[2]/l];};
+    for(const v of [[-1,t,0],[1,t,0],[-1,-t,0],[1,-t,0],[0,-1,t],[0,1,t],[0,-1,-t],[0,1,-t],[t,0,-1],[t,0,1],[-t,0,-1],[-t,0,1]]) V.push(nrm(v));
+    let F=[[0,11,5],[0,5,1],[0,1,7],[0,7,10],[0,10,11],[1,5,9],[5,11,4],[11,10,2],[10,7,6],[7,1,8],
+           [3,9,4],[3,4,2],[3,2,6],[3,6,8],[3,8,9],[4,9,5],[2,4,11],[6,2,10],[8,6,7],[9,8,1]];
+    for(let s=0;s<sub;s++){
+        const cache=new Map(), mid=(a,b)=>{const k=a<b?a*1e6+b:b*1e6+a; let i=cache.get(k);
+            if(i===undefined){ i=V.length; V.push(nrm([(V[a][0]+V[b][0])/2,(V[a][1]+V[b][1])/2,(V[a][2]+V[b][2])/2])); cache.set(k,i);} return i;};
+        const G=[]; for(const [a,b,c] of F){ const ab=mid(a,b), bc=mid(b,c), ca=mid(c,a); G.push([a,ab,ca],[b,bc,ab],[c,ca,bc],[ab,bc,ca]); }
+        F=G;
+    }
+    const pos=new Float32Array(V.length*3); V.forEach((v,i)=>pos.set(v,i*3));
+    const idx=(V.length>65535?new Uint32Array(F.length*3):new Uint16Array(F.length*3));
+    F.forEach((f,i)=>{                                   // make every triangle face outwards (counter-clockwise)
+        const [a,b,c]=f.map(j=>V[j]), e1=[b[0]-a[0],b[1]-a[1],b[2]-a[2]], e2=[c[0]-a[0],c[1]-a[1],c[2]-a[2]];
+        const n=[e1[1]*e2[2]-e1[2]*e2[1], e1[2]*e2[0]-e1[0]*e2[2], e1[0]*e2[1]-e1[1]*e2[0]];
+        const out=n[0]*(a[0]+b[0]+c[0])+n[1]*(a[1]+b[1]+c[1])+n[2]*(a[2]+b[2]+c[2])>0;
+        idx.set(out?f:[f[0],f[2],f[1]], i*3); });
+    return {pos, idx};
+}
+
+function initFerro3D(){
+    FERRO3D.ok=false;
+    try{
+        const cv=document.createElement('canvas'); cv.width=cv.height=256;
+        const opts={alpha:true, premultipliedAlpha:true, antialias:true, depth:true};
+        let gl=cv.getContext('webgl2',opts), big=!!gl;
+        if(!gl){ gl=cv.getContext('webgl',opts)||cv.getContext('experimental-webgl',opts); if(gl) big=!!gl.getExtension('OES_element_index_uint'); }
+        if(!gl) return false;
+        if(gl.getParameter(gl.MAX_FRAGMENT_UNIFORM_VECTORS) < FERRO_SLOTS+16 ||
+           gl.getParameter(gl.MAX_VERTEX_UNIFORM_VECTORS) < FERRO_SLOTS+16) return false;
+        const sh=(type,src)=>{ const o=gl.createShader(type); gl.shaderSource(o,src); gl.compileShader(o);
+            if(!gl.getShaderParameter(o,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o)); return o; };
+        const prog=gl.createProgram();
+        gl.attachShader(prog,sh(gl.VERTEX_SHADER,FERRO_VS)); gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,FERRO_FS));
+        gl.bindAttribLocation(prog,0,'a_dir'); gl.linkProgram(prog);
+        if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+        Object.assign(FERRO3D,{gl,cv,prog,big});
+        const q=parseInt(URLP.get('ferroq'),10);           // ?ferroq=4..6 fixes the mesh detail (testing)
+        FERRO3D.fixed = q>=4 && q<=6;
+        ferroMesh(FERRO3D.fixed ? Math.min(q, big?6:5) : (big?6:5));
+        gl.useProgram(prog);
+        for(const n of ['u_sp','u_w','u_cosw','u_sharp','u_p','u_len','u_wob','u_t','u_proj','u_camd','u_glow','u_glint','u_c0','u_c1','u_c2'])
+            FERRO3D.u[n]=gl.getUniformLocation(prog,n);
+        gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
+        FERRO3D.ok=true;
+        console.log(`[Ferro] 3D orb ready (detail ${FERRO3D.level}, ${big?'WebGL2/uint':'WebGL1'})`);
+        return true;
+    }catch(err){ console.warn('[Ferro] 3D orb unavailable, using the flat version:', err); FERRO3D.ok=false; return false; }
+}
+
+// (Re)build the sphere mesh at a level of detail: 6 = 40,962 vertices, 5 = 10,242, 4 = 2,562
+function ferroMesh(level){
+    const gl=FERRO3D.gl, mesh=icosphere(level);
+    if(FERRO3D.vb){ gl.deleteBuffer(FERRO3D.vb); gl.deleteBuffer(FERRO3D.ib); }
+    FERRO3D.vb=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,FERRO3D.vb); gl.bufferData(gl.ARRAY_BUFFER,mesh.pos,gl.STATIC_DRAW);
+    FERRO3D.ib=gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,FERRO3D.ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,mesh.idx,gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+    FERRO3D.nIdx=mesh.idx.length; FERRO3D.idxType=mesh.idx instanceof Uint32Array?gl.UNSIGNED_INT:gl.UNSIGNED_SHORT;
+    FERRO3D.level=level; FERRO3D.perf={last:0,acc:0,n:0};
+}
+// If frames get slow (under ~35 fps over two seconds), use a lighter mesh;
+// if the lightest is still slow, fall back to the flat orb.
+function ferroWatchSpeed(){
+    if(FERRO3D.fixed) return;
+    const P=FERRO3D.perf, now=performance.now(), dt=now-P.last; P.last=now;
+    if(dt<=0 || dt>1000){ P.acc=0; P.n=0; return; }       // paused tab or first frame
+    P.acc+=dt; P.n++;
+    if(P.acc<2000) return;                                  // judge over ~2 s
+    const avg=P.acc/P.n; P.acc=0; P.n=0;
+    if(avg<=28) return;
+    if(FERRO3D.level>4){ ferroMesh(FERRO3D.level-1); console.log(`[Ferro] frames slow (${avg.toFixed(0)} ms): mesh detail ${FERRO3D.level}`); }
+    else { FERRO3D.ok=false; console.log('[Ferro] frames still slow: using the flat orb'); }
+}
+
+function drawFerroOrb3D(cx,cy,rOr,oh,os,ov,gl2,ts,labelShown){
+    if(FERRO3D.ok===null) initFerro3D();
+    if(!FERRO3D.ok || rOr<2) return false;
+    ferroWatchSpeed(); if(!FERRO3D.ok) return false;
+    const gl=FERRO3D.gl, U=FERRO3D.u, P=FERRO.p, t=ts/1000;
+    const sharp=clamp((FERRO.hEff||0)*1.15,0,1), len=0.25+1.05*P.len;
+    // off-screen size: room for the longest spikes; resized only on big changes
+    const need=Math.ceil(2*rOr*(1+1.35*len+0.1)/32)*32;
+    if(need>FERRO3D.S || need<FERRO3D.S*0.7){ FERRO3D.S=need; FERRO3D.cv.width=FERRO3D.cv.height=need; }
+    const S=FERRO3D.S;
+    gl.viewport(0,0,S,S); gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+    // camera: radius 1 at the centre plane appears as rOr pixels
+    const camd=7, half=S/(2*rOr), f=camd/half, near=camd-3.5, far=camd+3.5;
+    gl.uniformMatrix4fv(U.u_proj,false,[f,0,0,0, 0,f,0,0, 0,0,(far+near)/(near-far),-1, 0,0,2*far*near/(near-far),0]);
+    gl.uniform1f(U.u_camd,camd);
+    // the spike field turns slowly about a tilted axis
+    const ax=[0.24,0.96,0.15], an=t*0.07, c=Math.cos(an), s=Math.sin(an), sp=FERRO3D.sp;
+    const cosOut=Math.cos(44*Math.PI/180), cosIn=Math.cos(24*Math.PI/180);
+    for(let k=0;k<FERRO_SLOTS;k++){
+        const v=FERRO3D.base[k], d=ax[0]*v[0]+ax[1]*v[1]+ax[2]*v[2];
+        const x=v[0]*c+(ax[1]*v[2]-ax[2]*v[1])*s+ax[0]*d*(1-c);
+        const y=v[1]*c+(ax[2]*v[0]-ax[0]*v[2])*s+ax[1]*d*(1-c);
+        const z=v[2]*c+(ax[0]*v[1]-ax[1]*v[0])*s+ax[2]*d*(1-c);
+        // keep a smooth patch at the front while the chord name is shown there
+        const keep = labelShown ? 1-clamp((z-cosOut)/(cosIn-cosOut),0,1) : 1;
+        const k3=keep*keep*(3-2*keep);
+        sp[4*k]=x; sp[4*k+1]=y; sp[4*k+2]=z; sp[4*k+3]=FERRO.amp[k]*k3;
+    }
+    // cones whose bases touch, as in real ferrofluid: the more spikes, the
+    // narrower each one; harsher sounds also make them more pointed
+    const count=14+(FERRO.hEff||0)*(FERRO_SLOTS-14);
+    const w=clamp(0.60*Math.sqrt(4*Math.PI/count)*(1-0.22*sharp),0.17,0.62);
+    gl.uniform4fv(U.u_sp,sp);
+    gl.uniform1f(U.u_w,w); gl.uniform1f(U.u_cosw,Math.cos(w)); gl.uniform1f(U.u_sharp,sharp);
+    gl.uniform1f(U.u_p,1.15+0.35*sharp); gl.uniform1f(U.u_len,len);   // cones with slightly concave sides
+    gl.uniform1f(U.u_wob,0.006+0.022*FERRO.loud); gl.uniform1f(U.u_t,t);
+    gl.uniform1f(U.u_glow,gl2);
+    gl.uniform1f(U.u_glint,0.12+0.5*clamp(FERRO.excite||0,0,1));
+    gl.uniform3fv(U.u_c0,hsvToRgb(oh,os*0.4,Math.min(ov*1.6,1)));   // same stops as the normal orb
+    gl.uniform3fv(U.u_c1,hsvToRgb(oh,os,ov));
+    gl.uniform3fv(U.u_c2,hsvToRgb(oh,os,ov*0.5));
+    gl.drawElements(gl.TRIANGLES,FERRO3D.nIdx,FERRO3D.idxType,0);
+    cx2.drawImage(FERRO3D.cv,cx-S/2,cy-S/2);
+    return true;
 }
 
 // ── State ────────────────────────────────────────────────────────
@@ -1872,8 +2096,11 @@ function draw(ts){
     }
 
     // Orb body (ferrofluid shape when that experiment is on)
+    const labelShown = !!(currentChord.label&&gl>0.12&&!isReview&&!colourOnly);
+    let lit3D=false;
     if(FERRO.on && FERRO.an){
-        drawFerroOrb(cx,cy,rOr,oh,os,ov,gl,ts);
+        lit3D = drawFerroOrb3D(cx,cy,rOr,oh,os,ov,gl,ts,labelShown);
+        if(!lit3D) drawFerroOrb(cx,cy,rOr,oh,os,ov,gl,ts);
     } else {
         const ob=cx2.createRadialGradient(cx-rOr*0.32,cy-rOr*0.32,rOr*0.03,cx,cy,rOr);
         ob.addColorStop(0,    hsvCss(oh,os*0.4,Math.min(ov*1.6,1),0.98));
@@ -1882,15 +2109,17 @@ function draw(ts){
         cx2.fillStyle=ob; cx2.beginPath(); cx2.arc(cx,cy,rOr,0,Math.PI*2); cx2.fill();
     }
 
-    // Specular
-    const hlR=rOr*0.42;
-    const hl=cx2.createRadialGradient(cx-rOr*0.3,cy-rOr*0.3,0,cx-rOr*0.3,cy-rOr*0.3,hlR);
-    hl.addColorStop(0,`rgba(255,255,255,${0.22*gl})`);
-    hl.addColorStop(1,'rgba(255,255,255,0)');
-    cx2.fillStyle=hl; cx2.beginPath(); cx2.arc(cx-rOr*0.3,cy-rOr*0.3,hlR,0,Math.PI*2); cx2.fill();
+    // Specular (the 3D orb lights itself)
+    if(!lit3D){
+        const hlR=rOr*0.42;
+        const hl=cx2.createRadialGradient(cx-rOr*0.3,cy-rOr*0.3,0,cx-rOr*0.3,cy-rOr*0.3,hlR);
+        hl.addColorStop(0,`rgba(255,255,255,${0.22*gl})`);
+        hl.addColorStop(1,'rgba(255,255,255,0)');
+        cx2.fillStyle=hl; cx2.beginPath(); cx2.arc(cx-rOr*0.3,cy-rOr*0.3,hlR,0,Math.PI*2); cx2.fill();
+    }
 
     // Chord label on orb
-    if(currentChord.label&&gl>0.12&&!isReview&&!colourOnly){
+    if(labelShown){
         const fs=Math.max(12,rOr*0.28)|0;
         cx2.font=`300 ${fs}px 'JetBrains Mono',monospace`;
         cx2.textAlign='center'; cx2.textBaseline='middle';
