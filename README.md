@@ -46,6 +46,8 @@ Extended chords take the colour of their family (C9 → dominant, Cmaj9 → majo
 
 Keys: `P` play, `V` review, `M` microphone, `C` colour only, space = record / play-pause.
 
+**Experimental: ferrofluid orb** (off by default; open the app with `?ferro=1`, or press `F`). The orb keeps its chord colour, but its shape follows the sound's energy and texture: it stays round when the music is soft; spikes shoot out on each onset (spectral flux), grow with loudness, and become more numerous and sharper as the sound gets harsher (noisiness, brightness, sensory roughness), then melt back. `T` shows or hides a tuning panel with live meters; slider settings are remembered in that browser.
+
 ---
 
 ## Architecture
