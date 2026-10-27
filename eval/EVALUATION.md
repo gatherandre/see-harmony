@@ -72,6 +72,24 @@ Whole song, against the composer's annotation: displayed changes 82 → 61 (1.95
 
 The in-browser fallback detector (used only when the server is offline or slow) is unchanged.
 
+## Orb shape (ferrofluid, v67)
+
+The orb's shape follows the sound's energy and texture: onsets (positive spectral flux from a 2048-point unsmoothed analyser), loudness (relative to the loudest recent level, capped so a quiet room never reads as loud) and harshness (0.45 × spectral flatness + 0.35 × brightness + 0.20 × sensory roughness of the 24 strongest peaks). It is drawn in 3D with WebGL: up to 64 spikes over the sphere, more and more pointed as harshness rises.
+
+`ferro_test_track.py` builds the 60 s check track: soft pad, loud clean piano, a 12 s passage of a recording, distorted rock with drums, soft pad. The track was fed to the browser as its microphone input (Chromium, fake audio capture), and the orb's state was recorded every frame:
+
+| Section | Spikes up (median) | Tallest spike (median / 90th pct, × spike length) |
+|---|---|---|
+| Soft pad | 0 | 0 |
+| Loud clean piano | 22 broad swells | 0.47 / 0.86 (on each chord's attack) |
+| A song mix ("I Miss You All") | 33 | 0.24 / 0.49 |
+| Distorted rock with drums | 58 narrow needles | 0.68 / 1.07 (on the drum hits) |
+| Soft pad again | 0 (all melted back within 0.6 s) | 0 |
+
+These examples also set the harshness scale (`ROUGH_CAL` in `index.html`), so they show the mapping behaves as intended; they are not an independent test, and no listener study has been run on the shape layer yet.
+
+Speed: 58 fps at full mesh detail (40,962 vertices) on a MacBook's Intel HD Graphics 5000. On slower devices the mesh steps down to 10,242 and 2,562 vertices, then to a flat outline, after two slow two-second periods; `?ferroq=4..6` fixes the detail for testing.
+
 ## Design decisions tested and rejected (dev set)
 
 - **Partial bass credit for inversions** (bass on the third or fifth): no gain overall (root 0.916 → 0.907–0.915), so not used.
