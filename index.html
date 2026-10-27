@@ -520,6 +520,16 @@ void main(){
     float tg = orbGrad(N.xy), ta = orbGrad(u.xy);
     vec3 col = tg < 0.45 ? mix(u_c0, u_c1, tg/0.45) : mix(u_c1, u_c2, (tg-0.45)/0.55);
     float a  = ta < 0.45 ? mix(0.98, 0.95, ta/0.45) : mix(0.95, 0.38, (ta-0.45)/0.55);
+    // On spike sides (where the surface turns away from the sphere) the
+    // gradient would paint every steep side with the dark rim colour, so a
+    // spike pointing at the viewer would read as a hole. There, light the
+    // surface by the way it faces instead: bright towards the upper-left
+    // light, shaded away from it, as a cone is.
+    vec3 Ls = normalize(vec3(-0.55, 0.62, 0.56));
+    float side = smoothstep(0.04, 0.30, 1.0 - dot(N, u));
+    float lam = max(dot(N, Ls), 0.0), hs2 = max(dot(N, normalize(Ls + V)), 0.0);
+    vec3 lit = u_c1*(0.40 + 0.80*lam) + u_c0*pow(hs2, 10.0)*0.55;
+    col = mix(col, lit, side);
     // the normal orb's soft white highlight
     float hs = u_glow * 0.22 * clamp(1.0 - length(N.xy - vec2(-0.30, 0.30)) / 0.42, 0.0, 1.0);
     col = col*(1.0 - hs) + vec3(hs); a = a + hs*(1.0 - a);
