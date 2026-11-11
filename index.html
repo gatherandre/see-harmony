@@ -264,7 +264,7 @@ const FERRO = {
     amp:new Float32Array(FERRO_SLOTS), w:new Float32Array(FERRO_SLOTS),
     // v68 motion: each spike is a damped spring; onsets travel across the orb as a ripple
     vel:new Float32Array(FERRO_SLOTS), delay:new Float32Array(FERRO_SLOTS), hist:[], epi:[0,1,0],
-    kickPrev:0, lastOn:0, rot:0, spin:0, pulse:0,
+    kickPrev:0, lastOn:0, rot:0, spin:0, pulse:0, roughTick:0, roughRaw:0,
     // golden-angle positions: the first n slots are always spread round the orb
     ang:Float32Array.from({length:FERRO_SLOTS},(_,k)=>((k*0.6180339887)%1)*Math.PI*2),
 };
@@ -370,7 +370,11 @@ function updateFerro(){
     for(let i=Math.floor(200/bHz);i<top;i++){ const pw=Math.pow(10,Math.max(fd[i],-90)/10); lnSum+=Math.log(pw); linSum+=pw; nb++; }
     const flat=nb? Math.exp(lnSum/nb)/(linSum/nb+1e-20) : 0;
     FERRO.flat+= (flat-FERRO.flat)*k60(0.05);
-    FERRO.rough+= (ferroRoughness()-FERRO.rough)*k60(0.05);
+    // Roughness scans the big analyser and compares peak pairs: the dearest
+    // part of this function, and smoothed over ~0.3 s anyway, so once every
+    // third frame is enough.
+    if((FERRO.roughTick=(FERRO.roughTick|0)+1)%3===0) FERRO.roughRaw=ferroRoughness();
+    FERRO.rough+= ((FERRO.roughRaw||0)-FERRO.rough)*k60(0.05);
     const noisy=clamp((FERRO.flat-ROUGH_CAL.flat0)/ROUGH_CAL.flatR,0,1);
     const bright=clamp((S.centroid-ROUGH_CAL.c0)/ROUGH_CAL.cR,0,1);
     const rough=clamp((FERRO.rough-ROUGH_CAL.r0)/ROUGH_CAL.rR,0,1);
