@@ -135,6 +135,158 @@ Two findings explain the ceiling:
 
 Moving past this needs more annotated real recordings (so real music can decide, instead of one seventh-heavy song), not further tuning.
 
+## A second real recording as reference: "Walking in the Railroad" (v69)
+
+The composer marked every chord of "Walking in the Railroad" (3:08, drums and bass throughout,
+24 chord changes a minute) on a tap screen, without seeing the detector's output: 75 segments,
+full coverage, seven chords and every one of them a seventh — Cmaj7, Abmaj7, Bbmaj7, Ebmaj7,
+Fmaj7, Dbmaj7, Dm7.
+
+| | Root | Major/minor | Sevenths | Segmentation | Changes / true changes |
+|---|---|---|---|---|---|
+| Held-out synthetic test set (30 tracks) | 0.926 | 0.885 | 0.811 | — | 1.05 |
+| "I Miss You All" (4:36, light percussion) | 0.951 | 0.94 | 0.831 | — | — |
+| **"Walking in the Railroad"** | **0.778** | **0.748** | **0.613** | **0.815** | **1.28** |
+
+Scored as the app runs it (30 s sections with 3 s of context); whole-file decoding gives the same
+figures (root 0.775, sevenths 0.624). The annotation is in `annotations/walking-in-the-railroad.json`
+and every figure in this section is reproduced by
+`python score_real.py annotations/walking-in-the-railroad.json <the recording>` — the recordings
+themselves are the composer's masters and are not in the repository.
+
+**The synthetic set overstates real performance by 15 to 20 points.** This is the first real
+recording in the set with drums and bass under the whole song and a fast harmonic rhythm, and it
+is 15 points below the held-out synthetic set at the root level and 20 at the sevenths level.
+
+**Timing is not the problem.** 70 of the 74 reference chord changes have an engine change within
+0.5 s of them, median offset 0.17 s. The engine hears *when* the harmony moves.
+
+**Quality is the problem.** Of the song's duration, 78 % gets the right root; 16 points of that
+are the right root with the wrong chord type. The largest single error modes:
+
+| Share of the song | Error |
+|---|---|
+| 5.0 % | Cmaj7 reported as C |
+| 3.6 % | Bbmaj7 reported as Bb7 |
+| 2.3 % | Cmaj7 reported as C7 |
+| 2.1 % | Bbmaj7 reported as Dm7 |
+| 2.0 % | Ebmaj7 reported as Eb |
+
+### Why: the seventh's audibility predicts the error
+
+For each annotated segment, the energy on each chord degree in the engine's treble chroma,
+relative to the mean of the three triad notes (1.00 = as loud as a triad note):
+
+| Chord | root | 3rd | 5th | major 7th | Reported correctly |
+|---|---|---|---|---|---|
+| Dbmaj7 | 1.76 | 0.99 | 0.25 | **2.77** | 57 % |
+| Abmaj7 | 1.10 | 0.78 | 1.12 | **1.89** | 87 % |
+| Fmaj7 | 1.15 | 0.42 | 1.43 | 0.78 | 56 % |
+| Ebmaj7 | 1.43 | 0.90 | 0.67 | **0.52** | 59 % |
+| Cmaj7 | 1.35 | 0.62 | 1.04 | **0.49** | 45 % |
+| Bbmaj7 | 0.73 | 0.94 | 1.33 | **0.43** | 23 % |
+
+The ordering is almost monotonic: where the major seventh is loud it is identified, where it is
+faint the engine falls back to the plain triad or to the dominant seventh. This is the plucked-string
+finding above (seventh/triad energy ratio 0.35 for plucked strings) measured on real music against
+a real annotation, and it is a property of the signal, not of the scoring.
+
+Bbmaj7 fails worst for a second, compounding reason: its root is the *weakest* of its own triad
+notes in the treble (0.73), while its 3rd and 5th are strong, so the treble chroma reads as D–F–A
+and Dm7 wins 19 % of its duration. The bass carries Bb for 78 % of it, and the bass-root term
+(`w_bass` 0.6) is not enough to overcome this; raising it was already tried and costs the
+synthetic sets.
+
+### What this reference can and cannot settle
+
+It settles that the synthetic figures are optimistic, that segmentation is sound, and that the
+remaining error is chord quality rather than root or timing.
+
+It cannot settle the seventh-versus-triad trade-off. All seven of its chords are sevenths, so a
+change that reported sevenths more freely would never be penalised here — the same limitation as
+"I Miss You All" (five of six chords sevenths), and more extreme. Arbitrating that trade-off needs
+an annotated recording with a mixed vocabulary of triads and sevenths; none of the real recordings
+annotated so far has one.
+
+## GuitarSet as the triad-side reference, and what it exposed (v66.3)
+
+Both composer-annotated songs are almost entirely seventh chords, so neither can judge whether
+the engine calls sevenths too freely. [GuitarSet](https://zenodo.org/records/3371780)
+(Xi et al., ISMIR 2018; CC BY 4.0) supplies the opposite bias: 360 excerpts of solo acoustic
+guitar, six players, five styles, three progressions, with two annotated chord layers.
+
+Only the 180 **comping** excerpts are used (90 min). The other 180 are monophonic solos over the
+same progressions, where there is no chord in the signal to detect. Players 00–02 are the dev
+set, 03–05 held out, so a parameter cannot be fitted to the players it is tested on.
+
+Census of the two layers, by share of annotated time:
+
+| | plain triads | with a 6th or 7th | expressible in the engine's 10 types |
+|---|---|---|---|
+| `instructed` (the lead sheet the player was given) | 87 % | 13 % | 100 % |
+| `performed` (hand-verified transcription of what was played) | 45 % | 34 % | 64 % |
+
+The lead sheet understates what was played — a player handed "Eb" plays Ebmaj7 — so both are
+reported and `performed` is treated as primary. 175 distinct chord types appear in it; mir_eval
+excludes the out-of-gamut ones at the levels where they do not map, and `score_guitarset.py`
+prints the comparable share of time rather than quietly scoring a subset.
+
+### The finding: v66 called sevenths four times too often
+
+| | share of time |
+|---|---|
+| lead sheet asks for a chord with a 6th or 7th | 13 % |
+| players actually played one | 18 % |
+| **v66 reports one** | **71 %** |
+| v66 reports `maj7` specifically | 42 % (played: 2 %) |
+
+One Rock excerpt, lead sheet A–D–A–E–D–A, transcribed as plain triads throughout, is reported as
+Amaj7, Dmaj7, A, E, Amaj7, Amaj7.
+
+This had been invisible: the synthetic sets represent sevenths well, so nothing there punished the
+lean, and both annotated songs actively rewarded it. The earlier conclusion that "one real
+recording cannot arbitrate" was right about arbitration and wrong about the direction — every
+rejected change that helped the songs by reporting more sevenths was pushing the wrong way.
+
+### Tried and rejected: scoring the seventh on its own evidence
+
+The natural fix, and the one the Railroad diagnostic points at, is to call a seventh only when
+there is energy on the seventh degree: replace the flat bias with `w7 x (chroma at the 7th -
+floor x mean chroma of the chord's own triad notes)`. It was worse at every weight tried, and it
+damaged **root** accuracy badly (GuitarSet dev root 0.729 → 0.638 at the best setting, 0.17 at
+`w7` 1.0), because a term keyed to a single chroma bin lets wrong-root chords win on an
+accidentally strong bin. Best criterion value 0.584 against 0.660 for the flat fix. Rejected.
+
+Note that the in-browser fallback detector already does gate sevenths this way (a 1.8 penalty
+unless the seventh reaches 0.18 of the normalised chroma) and is unchanged. The idea is sound for
+a template-correlation score over a raw chroma; it does not transfer to NNLS saliences decoded by
+Viterbi, where the per-chord terms are on a different scale.
+
+### The change
+
+`triad_bias` −0.05 → **−0.02** and a new `qual_bias['maj7']` of **−0.06**. Selection rule, fixed
+before any result was read: maximise the unweighted mean of sevenths recall on the synthetic dev
+set and the GuitarSet dev players against the `performed` layer, and among settings within 0.005
+of the best prefer the one nearest the current parameters. The songs were shown throughout as
+observation only; being nearly all sevenths, they were not allowed to choose.
+
+A lighter `w_bass` (0.60 → 0.40) scored higher still on the criterion (0.675 against 0.660) and
+was **not** taken: it buys 1.6 points of GuitarSet sevenths for 2.8 points of Railroad root
+accuracy, and the visualiser leans hardest on the root.
+
+| | Synthetic test (held out) | GuitarSet test players (held out) | Walking in the Railroad |
+|---|---|---|---|
+| v66.2 | 0.926 / 0.885 / **0.811** | 0.610 / 0.586 / **0.382** | 0.778 / 0.748 / **0.613** |
+| **v66.3** | 0.927 / 0.889 / **0.746** | 0.616 / 0.593 / **0.457** | 0.767 / 0.722 / **0.431** |
+
+(root / major-minor / sevenths. GuitarSet against `performed`; against the lead sheet, sevenths
+0.232 → 0.344. Songs scored the way the app runs them, in 30 s sections.)
+
+The seventh-call rate over all 180 comping excerpts falls from 71 % to 45 %, against 18 % actually
+played — improved, not solved. The trade is deliberate: 7.5 points of seventh accuracy on guitar
+players the tuning never saw, and a small gain in major/minor on both held-out sets, against
+6.5 points of synthetic sevenths and 18 on a song whose every chord is a seventh.
+
 ## Design decisions tested and rejected (dev set)
 
 - **Partial bass credit for inversions** (bass on the third or fifth): no gain overall (root 0.916 → 0.907–0.915), so not used.
@@ -149,7 +301,11 @@ Moving past this needs more annotated real recordings (so real music can decide,
 
 ## Limitations
 
-- Synthetic audio plus one real recording annotated by its composer; more real recordings (GuitarSet, classroom repertoire) are the next test.
+- Synthetic audio plus two real recordings annotated by their composer, both of them almost
+  entirely seventh chords; a recording with a mixed triad/seventh vocabulary, and recordings
+  by other players (GuitarSet, classroom repertoire), are the next test.
+- On real music with drums, bass and a fast harmonic rhythm the engine scores 0.78 / 0.75 / 0.61,
+  not the 0.93 / 0.89 / 0.81 of the synthetic set.
 - First-inversion chords are usually reported with the bass note as root.
 - Plucked-string timbres are the weakest condition.
 - The speed figure is from a cloud CPU; the free hosting tier is slower.

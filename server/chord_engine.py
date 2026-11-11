@@ -37,8 +37,11 @@ P = dict(
     hpss_margin=2.0, whiten_oct=1.0,
     harm_decay=0.7, n_harm=12,
     treble_lo=36, treble_hi=95, bass_lo=28, bass_hi=55,
-    w_bass=0.6, triad_bias=-0.05, switch=1.6,
-    qual_bias={'sus4': -0.08, 'aug': -0.08, 'dim7': -0.04},
+    w_bass=0.6, triad_bias=-0.02, switch=1.6,
+    # triad_bias and the maj7 term were set against GuitarSet, where players played a
+    # seventh 18 % of the time and the engine reported one 71 % of the time; see
+    # EVALUATION.md. Synthetic audio alone never punished the lean towards sevenths.
+    qual_bias={'sus4': -0.08, 'aug': -0.08, 'dim7': -0.04, 'maj7': -0.06},
     silence_rel=0.02,
     win_hpss=True, win_hpss_light=True, win_res_type=None,    # microphone windows (analyze_window)
 )
