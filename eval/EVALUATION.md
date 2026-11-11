@@ -287,6 +287,70 @@ played — improved, not solved. The trade is deliberate: 7.5 points of seventh 
 players the tuning never saw, and a small gain in major/minor on both held-out sets, against
 6.5 points of synthetic sevenths and 18 on a song whose every chord is a seventh.
 
+## The adaptive prior: tried, bounded, abandoned (v66.3 review)
+
+After v66.3 the engine still reports a seventh 45 % of the time where players play one 18 %,
+and the obvious next move is to let it form an expectation of a piece's vocabulary while it
+listens rather than carry a fixed bias. Three experiments, in order, and none of them is used.
+
+**1. Per-piece seventh evidence, absolute.** Decode once, then measure over the whole piece how
+much chroma energy sits a major seventh above each *decoded root* — conditioning on the root
+only, so the measure cannot merely confirm the first pass's own bias — and set the maj7 bias
+from it. The statistic does not separate the corpora, and it fails in the revealing direction:
+
+| | energy on the maj 7th above the decoded root (1.0 = as loud as root and fifth) |
+|---|---|
+| GuitarSet dev (87 % plain triads) | 0.252 |
+| synthetic tracks that are >45 % sevenths | 0.050 |
+| "Walking in the Railroad" (every chord a seventh) | 0.430 |
+
+Real guitar carries *five times* the energy on the major-seventh degree that clean synthetic
+seventh chords do, because of string ring, room and broadband noise. The best single threshold
+separates triad-heavy GuitarSet from seventh-heavy synthetic 48 % of the time — worse than
+chance. Any absolute measure of "is the seventh there" is dominated by a per-recording offset.
+
+**2. Per-root pooled prior.** Decode once; for each root the piece uses, pool the chroma over
+every frame assigned to that root across the whole piece, score the qualities on that pooled
+evidence — many seconds instead of one segment — and feed the result back as a prior for a
+second decode. This is the within-piece comparison the absolute measure lacks, and it uses the
+fact that music repeats.
+
+| strength | synthetic dev | GuitarSet dev (played) | Railroad |
+|---|---|---|---|
+| none (v66.3) | 0.914 / 0.882 / 0.777 | 0.740 / 0.672 / 0.543 | 0.776 / 0.731 / 0.462 |
+| 0.2 | 0.916 / 0.888 / 0.755 | 0.745 / 0.679 / 0.550 | 0.786 / 0.756 / 0.426 |
+| 0.5 | 0.918 / 0.892 / 0.732 | 0.748 / 0.683 / 0.551 | 0.786 / 0.756 / 0.426 |
+| 2.0 | 0.914 / 0.873 / 0.668 | 0.752 / 0.678 / 0.550 | 0.788 / 0.739 / 0.388 |
+
+It sharpens root and major/minor on all three references (Railroad +1.0 root, +2.5 major/minor)
+and costs chord quality everywhere, because committing a root to one quality for a whole piece
+erases the pieces that genuinely use both C and Cmaj7. Not used as it stands; the root and
+major/minor gain is real and could be revisited as a change aimed at those levels rather than
+at sevenths.
+
+**3. The oracle that ended it.** Before building an adaptive rule, bound what one could win:
+give every piece the maj7 bias that is best *for that piece*, chosen knowing the answer. No
+rule can beat that.
+
+| | best single bias | shipped bias (−0.06) | per-piece oracle |
+|---|---|---|---|
+| synthetic dev | 0.787 (at 0.00) | 0.777 | **0.791** |
+| GuitarSet dev | 0.587 (at −0.22) | 0.543 | **0.601** |
+
+Perfect per-piece knowledge is worth 1.4 points on GuitarSet and 0.4 on the synthetic set over
+the best *fixed* setting. And the oracle's choices are not piece-specific at all: 80 of
+GuitarSet's 90 excerpts want the strongest penalty on the grid, and so do 14 of the 30 synthetic
+tracks. The oracle is not discovering that pieces differ; it is saying that the fixed bias
+should be stronger on one corpus than the other, which is the trade-off of v66.3 restated.
+
+**Conclusion.** Adapting a decode-side parameter per piece has almost no headroom, which is
+consistent with everything else in this file: ten changes rejected in the v68 review, the
+per-frame evidence term, the two experiments above. The remaining error is not recoverable by
+weighting the same decisions differently — it is in what the front end can see. Moving it needs
+a learned acoustic model over the CQT in place of template matching, which is a different scale
+of work and is what the paper's own architecture proposes. Further parameter work on this engine
+is not warranted.
+
 ## Design decisions tested and rejected (dev set)
 
 - **Partial bass credit for inversions** (bass on the third or fifth): no gain overall (root 0.916 → 0.907–0.915), so not used.
