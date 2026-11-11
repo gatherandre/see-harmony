@@ -90,6 +90,51 @@ These examples also set the harshness scale (`ROUGH_CAL` in `index.html`), so th
 
 Speed: 58 fps at full mesh detail (40,962 vertices) on a MacBook's Intel HD Graphics 5000. On slower devices the mesh steps down to 10,242 and 2,562 vertices, then to a flat outline, after two slow two-second periods; `?ferroq=4..6` fixes the detail for testing.
 
+## Orb motion (v68)
+
+Each spike was a value eased toward its target, so every spike moved together and stepped to its new height within a frame or two. v68 gives the motion a physical model:
+
+- **Springs.** Each spike is a damped spring (stiff and lightly damped while rising, soft and heavily damped while melting back), so it overshoots a little on a hit and settles, instead of snapping to its target.
+- **Ripple.** Each detected onset picks a point on the sphere; a spike's excitement is delayed by how far it sits from that point, reaching the far side about 70 ms later. A hit therefore travels across the surface.
+- **Sway and spin.** Spike positions drift slightly, and the field turns faster when the music is energetic (0.07 to 0.37 rad/s).
+- **Body pulse.** The orb's radius swells up to 10 % on a hit.
+
+Measured by replaying `ferro_test_track.py`'s track into the browser as microphone input and recording the orb's state every frame (60 fps in both versions):
+
+| | v67 | v68 |
+|---|---|---|
+| Jerkiness (second difference / first difference), clean piano | 0.83 | **0.67** |
+| Jerkiness, song passage | 0.82 | **0.65** |
+| Melt-back after the loud passage | 0.57 s | **0.35 s** |
+| Movement per spike per second, rock | 1.64 | 2.00 |
+| First piano chord: 10–90 % rise | 33 ms | 33 ms (starting 50 ms after the sound) |
+
+Smoother per unit of travel, more movement overall, and spikes at different heights as a ripple passes, rather than moving in unison.
+
+## Chord detection: what was tried and rejected (v68 review)
+
+A systematic search for an improvement over the v66 engine found none that survives held-out testing. Recorded here so it is not repeated.
+
+Tried on cached note saliences, scored on the dev set, the held-out test set, and the composer-annotated recording:
+
+| Change | Result |
+|---|---|
+| Frame weighting by energy (loud frames count more) | dev sevenths 0.793 → 0.801, test 0.811 → 0.807 — within noise |
+| Re-choosing each decoded segment's quality from its mean chroma | dev 0.793 → 0.804, but loses it again once the app splits a file into 30 s sections (song sevenths 0.831 → 0.810) |
+| Overtone decay 0.5 / 0.6 / 0.85 / 0.95 (0.7 in use) | all worse; 0.95 collapses major/minor to 0.770 |
+| Chroma smoothing over 3 / 5 / 9 frames | helps the song, costs the dev set |
+| Notes ringing on within a chord, reset at chord changes | song root 0.951 → 0.961, dev sevenths 0.801 → 0.786 |
+| Soft "is this note present" chroma, seventh-weighted templates | dev and test sevenths collapse (0.80 → 0.52–0.63) while the song improves |
+| Triad bias, bass weight, switch penalty, root weight sweeps | no setting beats the current one on both sets |
+| Microphone: an extra window aligned to each detected strum | offline, +2.4 points exact on the held-out test set; in the browser, no gain on the real song (0.75–0.77 either way, run-to-run spread ±0.02) and more flicker (flips 2–3 → 4). Rejected. |
+
+Two findings explain the ceiling:
+
+1. **The seventh is physically faint on plucked strings.** In the chroma, the seventh's energy relative to the triad's notes is 0.85 for the pad, 0.78 for the piano-like tone, and **0.35 for plucked strings** — which is where seventh recall is weakest (0.60 against 0.85–0.91). It is under-represented in the signal, not merely mis-scored.
+2. **One real recording cannot arbitrate.** Changes that improve the annotated song mostly do so by reporting more sevenths, and five of that song's six chords are sevenths. Every such change costs accuracy on the synthetic sets.
+
+Moving past this needs more annotated real recordings (so real music can decide, instead of one seventh-heavy song), not further tuning.
+
 ## Design decisions tested and rejected (dev set)
 
 - **Partial bass credit for inversions** (bass on the third or fifth): no gain overall (root 0.916 → 0.907–0.915), so not used.

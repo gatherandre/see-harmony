@@ -39,7 +39,7 @@ The orb keeps its chord colour, but behaves like ferrofluid in a magnetic field:
 
 | Sound | Shape |
 |---|---|
-| Onsets (spectral flux) | spikes shoot out on each hit, then melt back |
+| Onsets (spectral flux) | spikes shoot out on each hit as a ripple across the orb, overshoot, then settle and melt back |
 | Loudness | how long the spikes are and how long they stay up |
 | Harshness (noisiness, brightness, sensory roughness) | how many spikes, and how pointed: rounded swells for clean sounds, needles for distorted ones |
 
