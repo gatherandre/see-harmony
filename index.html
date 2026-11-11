@@ -105,7 +105,7 @@
 </div>
 <div id="ui" style="opacity:0;transition:opacity 1.2s;">
     <div id="top-bar">
-        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v67</span></div>
+        <div id="wordmark">See Harmony<span>Neural Conservatory MVP · gatherandre · v68</span></div>
         <div id="controls">
             <div class="btn-group">
                 <button class="btn active" id="btn-play"   onclick="setMode('play')">Play</button>
@@ -262,6 +262,9 @@ const FERRO = {
     loud:0, kick:0, harsh:0, field:0, excite:0, flat:0, rough:0, parts:[0,0,0],
     ceil:-60, fluxAvg:0, fluxPeak:1e-3, lastT:0,
     amp:new Float32Array(FERRO_SLOTS), w:new Float32Array(FERRO_SLOTS),
+    // v68 motion: each spike is a damped spring; onsets travel across the orb as a ripple
+    vel:new Float32Array(FERRO_SLOTS), delay:new Float32Array(FERRO_SLOTS), hist:[], epi:[0,1,0],
+    kickPrev:0, lastOn:0, rot:0, spin:0, pulse:0,
     // golden-angle positions: the first n slots are always spread round the orb
     ang:Float32Array.from({length:FERRO_SLOTS},(_,k)=>((k*0.6180339887)%1)*Math.PI*2),
 };
@@ -383,13 +386,39 @@ function updateFerro(){
     const hEff=clamp(FERRO.harsh*(0.4+1.4*P.harsh),0,1);
     FERRO.hEff=hEff;
     const count = FERRO3D.ok ? 14+hEff*(FERRO_SLOTS-14) : 5+hEff*(32-5);   // spikes over the whole sphere vs. round the outline
-    const att=k60(0.25+0.65*P.snap), rel=k60(0.012+0.16*P.melt), t=now/1000;
+    const t=now/1000;
+    // Ripple: each onset starts from a new point on the orb and reaches the
+    // far side about 70 ms later, so a hit travels across the
+    // surface instead of moving every spike at once.
+    if(kickRaw>0.35 && FERRO.kickPrev<=0.35 && t-FERRO.lastOn>0.09){
+        const z=2*Math.random()-1, ph=2*Math.PI*Math.random(), r=Math.sqrt(1-z*z);
+        FERRO.epi=[r*Math.cos(ph), r*Math.sin(ph), z]; FERRO.lastOn=t;
+    }
+    FERRO.kickPrev=kickRaw;
+    const H=FERRO.hist; H.push(t, excite); while(H.length>2 && H[0]<t-0.4) H.splice(0,2);
+    const exAt=tt=>{ for(let i=H.length-2;i>=0;i-=2) if(H[i]<=tt) return H[i+1]; return H[1]; };
+    // Springs: a spike overshoots a little when thrown out and settles like
+    // liquid, instead of jumping to its new height in one frame.
+    const wA=2*Math.PI*(5+8*P.snap), wR=2*Math.PI*(0.5+3*P.melt);
+    const nSub=Math.max(1,Math.ceil(dt*120)), h=dt/nSub, E=FERRO.epi;
     for(let k=0;k<FERRO_SLOTS;k++){
         FERRO.w[k]+= (clamp(count-k,0,1)-FERRO.w[k])*k60(0.05);
+        const b=FERRO3D.base[k], cosA=clamp(b[0]*E[0]+b[1]*E[1]+b[2]*E[2],-1,1);
+        FERRO.delay[k]+= (0.07*Math.acos(cosA)/Math.PI-FERRO.delay[k])*k60(0.3);
         const vary=0.72+0.28*Math.sin(t*1.3+k*2.39);        // each spike breathes a little differently
-        const target=excite*FERRO.w[k]*vary;
-        FERRO.amp[k]+= (target-FERRO.amp[k])*(target>FERRO.amp[k]?att:rel);
+        const target=exAt(t-FERRO.delay[k])*FERRO.w[k]*vary;
+        let x=FERRO.amp[k], v=FERRO.vel[k];
+        for(let i=0;i<nSub;i++){
+            const up=target>x||v>0, w=up?wA:wR, zeta=up?0.62:0.9;   // stiff while moving outward, soft while melting back
+            v+= (w*w*(target-x)-2*zeta*w*v)*h; x+= v*h;
+            if(x<0){ x=0; if(v<0) v=0; }
+        }
+        FERRO.amp[k]=x; FERRO.vel[k]=v;
     }
+    // the field turns faster when the music is energetic; the body swells on each hit
+    FERRO.spin+= (FERRO.loud-FERRO.spin)*k60(0.02);
+    FERRO.rot+= dt*(0.07+0.30*FERRO.spin);
+    FERRO.pulse+= (FERRO.kick*(0.4+0.6*FERRO.loud)-FERRO.pulse)*k60(0.35);
     if(Math.floor(now/100)!==Math.floor((now-dt*1000)/100)){
         const m=(id,v)=>{const e=document.getElementById(id); if(e) e.style.width=Math.round(clamp(v,0,1)*100)+'%';};
         m('fpm-loud',FERRO.loud); m('fpm-kick',FERRO.kick); m('fpm-harsh',FERRO.harsh); m('fpm-field',excite);
@@ -639,10 +668,13 @@ function drawFerroOrb3D(cx,cy,rOr,oh,os,ov,gl2,ts,labelShown){
     gl.uniformMatrix4fv(U.u_proj,false,[f,0,0,0, 0,f,0,0, 0,0,(far+near)/(near-far),-1, 0,0,2*far*near/(near-far),0]);
     gl.uniform1f(U.u_camd,camd);
     // the spike field turns slowly about a tilted axis
-    const ax=[0.24,0.96,0.15], an=t*0.07, c=Math.cos(an), s=Math.sin(an), sp=FERRO3D.sp;
+    const ax=[0.24,0.96,0.15], an=FERRO.rot, c=Math.cos(an), s=Math.sin(an), sp=FERRO3D.sp;
+    const sway=0.015+0.06*FERRO.loud;          // spikes lean and drift a little, more when loud
     const cosOut=Math.cos(44*Math.PI/180), cosIn=Math.cos(24*Math.PI/180);
     for(let k=0;k<FERRO_SLOTS;k++){
-        const v=FERRO3D.base[k], d=ax[0]*v[0]+ax[1]*v[1]+ax[2]*v[2];
+        const b0=FERRO3D.base[k];
+        let vx=b0[0]+sway*Math.sin(t*0.9+k*1.7), vy=b0[1]+sway*Math.sin(t*1.1+k*2.9), vz=b0[2]+sway*Math.sin(t*0.7+k*4.1);
+        const vn=Math.hypot(vx,vy,vz); const v=[vx/vn,vy/vn,vz/vn], d=ax[0]*v[0]+ax[1]*v[1]+ax[2]*v[2];
         const x=v[0]*c+(ax[1]*v[2]-ax[2]*v[1])*s+ax[0]*d*(1-c);
         const y=v[1]*c+(ax[2]*v[0]-ax[0]*v[2])*s+ax[1]*d*(1-c);
         const z=v[2]*c+(ax[0]*v[1]-ax[1]*v[0])*s+ax[2]*d*(1-c);
@@ -2037,7 +2069,7 @@ function processVisuals(){
         V.orbH=ema(V.orbH,currentChord.hue,0.05);
         V.orbS=ema(V.orbS,currentChord.sat,0.05);
         V.orbV=ema(V.orbV,currentChord.val,0.05);
-        V.orbR=ema(V.orbR,dim*0.09+S.onset*dim*0.09,0.28);
+        V.orbR=ema(V.orbR,dim*0.09*(1+(FERRO.on&&FERRO.an?0.10*FERRO.pulse:0))+S.onset*dim*0.09,0.28);
         V.glow=ema(V.glow,clamp(rms*80,0.25,1.0),0.18);
     } else {
         V.skyL=ema(V.skyL,0.30,0.003); V.skyA=ema(V.skyA,LAB_COOL[1]*0.5,0.003); V.skyB=ema(V.skyB,LAB_COOL[2]*0.5,0.003);
