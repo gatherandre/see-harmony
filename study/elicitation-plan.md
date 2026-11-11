@@ -139,6 +139,33 @@ lightness and shape with its confidence interval, plus an explicit statement of 
 showed no shared mapping and are therefore left to the designer. The honest result may be a
 mapping that covers three chord types and declines to cover the other seven.
 
+## 10a. How many listeners this needs
+
+Simulated on the exact procedure above — weighted circular mean, permutation null, Holm
+correction across ten qualities, participant weights drawn from the range the four pilot
+participants produced. The table gives the chance of detecting a quality, by how much the
+listeners genuinely agree about it. Ninety degrees apart is no agreement at all.
+
+| typical angle between two listeners | 8 | 10 | 12 | 15 | 20 | 25 | 30 |
+|---|---|---|---|---|---|---|---|
+| ~26° apart | 96 % | 100 % | 100 % | 100 % | 100 % | 100 % | 100 % |
+| ~35° apart | 83 % | 92 % | 95 % | 100 % | 100 % | 100 % | 100 % |
+| ~45° apart | 42 % | 59 % | 82 % | 90 % | 97 % | 100 % | 100 % |
+| ~58° apart | 15 % | 19 % | 36 % | 48 % | 65 % | 80 % | 88 % |
+| ~75° apart | 5 % | 5 % | 9 % | 10 % | 19 % | 36 % | 42 % |
+
+In the pilot the four participants sat about 25° apart on minor and about 51° apart on major
+7th. So **twelve to fifteen listeners is a real study** for qualities where agreement is strong,
+and twenty is comfortable for moderate ones. A quality whose listeners sit 75° apart is not
+detectable at any realistic sample size, and would not be a usable mapping if it were.
+
+The simulation draws its null from uniform directions, while the real permutation null draws
+from each participant's own answers; for a listener who uses a narrow part of the wheel the real
+null is narrower and the real test therefore somewhat more conservative than this table.
+
+The 40-participant floor in §9 applies only to the exploratory clustering. It is not a
+requirement of the study, and if the sample stops short of it that section is simply not run.
+
 ## 11. Stopping rule
 
 Collection closes on **30 November 2026**, or at 60 participants, whichever comes first. The
@@ -158,4 +185,4 @@ Every departure from this plan is recorded here with its date and reason.
 
 | Date | Change | Reason |
 |---|---|---|
-| — | — | — |
+| 2026-11-11 | §10a added | Sample size was stated without justification; simulated before any group analysis was run. |
