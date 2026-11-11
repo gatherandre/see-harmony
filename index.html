@@ -421,7 +421,7 @@ function updateFerro(){
         // One continuous membrane: three noise layers swell and subside on springs,
         // so the form grows and relaxes rather than extending separate spikes.
         const [tLow,tMid,tHigh]=ferroTargets(excite,hEff,P.len);
-        const wA=2*Math.PI*(2.0+3.2*P.snap), wR=2*Math.PI*(0.35+1.7*P.melt);
+        const wA=2*Math.PI*(1.3+2.2*P.snap), wR=2*Math.PI*(0.22+1.0*P.melt);   // the membrane rises and subsides slowly
         const step=(x,v,target)=>{
             for(let i=0;i<nSub;i++){
                 const up=target>x||v>0, w=up?wA:wR, zeta=up?0.72:0.95;
@@ -454,7 +454,7 @@ function updateFerro(){
     }
     // the field turns faster when the music is energetic; the body swells on each hit
     FERRO.spin+= (FERRO.loud-FERRO.spin)*k60(0.02);
-    FERRO.rot+= dt*(0.07+0.30*FERRO.spin);
+    FERRO.rot+= dt*(0.040+0.16*FERRO.spin);
     FERRO.pulse+= (FERRO.kick*(0.4+0.6*FERRO.loud)-FERRO.pulse)*k60(0.35);
     if(Math.floor(now/100)!==Math.floor((now-dt*1000)/100)){
         const m=(id,v)=>{const e=document.getElementById(id); if(e) e.style.width=Math.round(clamp(v,0,1)*100)+'%';};
@@ -540,13 +540,13 @@ float gnoise(vec3 p){
 // Radius of the membrane in direction u, and a detail value used to vary its colour.
 float organic(vec3 u, out float detail){
     vec3 q = u_rot * u;                                        // the form itself turns
-    float n1 = gnoise(q * 1.50 + vec3(0.0, 0.0, u_t * 0.075));         // a few broad lobes: the body
-    float n2 = gnoise(q * 2.80 + vec3(u_t * 0.065, 1.7, 0.0));         // swells over them
-    float nr = gnoise(q * 4.40 + vec3(0.0, u_t * 0.110, 3.1));
+    float n1 = gnoise(q * 1.50 + vec3(0.0, 0.0, u_t * 0.038));         // a few broad lobes: the body
+    float n2 = gnoise(q * 2.80 + vec3(u_t * 0.034, 1.7, 0.0));         // swells over them
+    float nr = gnoise(q * 4.40 + vec3(0.0, u_t * 0.055, 3.1));
     float n3 = 1.0 - abs(nr);                                          // ridges, like veins, not crumple
     detail = 0.55 * n2 + 0.45 * nr;
-    float r = 1.0 + 0.011 * sin(u_t * 0.53 + 2.0 * u.y)        // a slow breath, always alive
-            + u_aLow * n1 + u_aMid * n2 + 0.30 * u_aHigh * (n3 - 0.55);
+    float r = 1.0 + 0.016 * sin(u_t * 0.26 + 2.0 * u.y)        // a slow breath, always alive
+            + u_aLow * (n1 + 1.25 * max(n1, 0.0) * max(n1, 0.0)) + u_aMid * n2 + 0.30 * u_aHigh * (n3 - 0.55);
     float d = acos(clamp(dot(u, u_epi), -1.0, 1.0));           // swell travelling out from the last onset
     r += u_waveAmp * exp(-pow((d - u_waveFront) / u_waveW, 2.0));
     r = mix(r, 1.0 + (r - 1.0) * 0.22, u_flat * smoothstep(0.50, 0.92, u.z));   // calm behind the chord name
@@ -603,16 +603,16 @@ void main(){
     // light bleeding around and through the form, the way it does in living tissue
     float wrap = max((dot(N, L) + 0.55) / 1.55, 0.0);
     float back = pow(max(dot(-N, L), 0.0), 1.7);
-    float thin = clamp(0.60 - v_bulge * 0.9, 0.0, 1.0);
-    vec3 col = base * (0.30 + 0.62 * wrap);
+    float thin = clamp(0.30 + 1.30 * v_bulge, 0.0, 1.0);   // the further it reaches, the thinner it is
+    vec3 col = base * (0.26 + 0.58 * wrap);
     vec3 deep = mix(u_c1, u_c0, 0.35);
-    col += deep * back * thin * 2.40;                          // light carried through the thin places
-    col += deep * pow(1.0 - nv, 1.3) * 0.55 * (0.4 + 0.6 * u_glow);   // glow from within, at the edge
+    col += deep * back * thin * 3.20;                          // light carried through the thin places
+    col += deep * pow(1.0 - nv, 1.3) * 0.75 * (0.4 + 0.6 * u_glow);   // glow from within, at the edge
     col += mix(u_c0, vec3(1.0), 0.45) * pow(max(dot(N, normalize(L + V)), 0.0), 9.0) * (0.10 + 0.16 * u_glow);
     // a thin-film sheen at grazing angles: the colour turns as the surface turns away
     vec3 irid = 0.5 + 0.5 * cos(6.2831 * (vec3(0.0, 0.33, 0.67) + fres * 1.6 + v_detail * 0.55 + u_t * 0.02));
-    col = mix(col, col * 0.45 + irid * 0.60, fres * 0.55 * (0.30 + 0.70 * u_var));
-    float a = mix(0.98, 0.58, fres);
+    col = mix(col, col * 0.45 + irid * 0.60, fres * 0.70 * (0.30 + 0.70 * u_var));
+    float a = mix(0.94, 0.40, fres) * (1.0 - 0.30 * clamp(v_bulge * 1.6, 0.0, 1.0));
     gl_FragColor = vec4(min(col, 1.0) * a, a);
 }`;
 
@@ -700,7 +700,7 @@ function drawFerroOrb3D(cx,cy,rOr,oh,os,ov,gl2,ts,labelShown){
     ferroWatchSpeed(); if(!FERRO3D.ok) return false;
     const gl=FERRO3D.gl, U=FERRO3D.u, P=FERRO.p, t=ts/1000;
     // off-screen size: room for the membrane's fullest swell; resized only on big changes
-    const reach=1.0+(0.45+1.10*P.len)*1.05+0.20;
+    const reach=1.0+(0.45+1.10*P.len)*1.45+0.20;
     const need=Math.ceil(2*rOr*reach/32)*32;
     if(need>FERRO3D.S || need<FERRO3D.S*0.7){ FERRO3D.S=need; FERRO3D.cv.width=FERRO3D.cv.height=need; }
     const S=FERRO3D.S;
