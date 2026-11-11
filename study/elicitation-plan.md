@@ -166,6 +166,33 @@ null is narrower and the real test therefore somewhat more conservative than thi
 The 40-participant floor in §9 applies only to the exploratory clustering. It is not a
 requirement of the study, and if the sample stops short of it that section is simply not run.
 
+## 10b. Does a mapping learned from listeners predict a listener better than the designed one?
+
+Declared 11 November 2026, before being run. Exploratory, and separate from the question in
+§7: that asks whether shared structure exists, this asks whether a mapping built from other
+people is *useful* for a person it has never seen.
+
+Leave one participant out. Fit the weighted group mapping of §6 on everyone else, then measure
+how far its prediction falls from the held-out person's own mean direction for each chord
+quality. Compare, on the same held-out person, with the distance from See Harmony's designed
+table. Repeat for every participant; compare the two error distributions with a paired
+Wilcoxon signed-rank test across participants.
+
+Three outcomes and what each means:
+
+- **Learned closer than designed.** A mapping taken from listeners predicts a new listener better
+  than the one a designer wrote. That is the elicitation claim, in its smallest testable form.
+- **No difference.** The designed table is already as good as anything the listeners produce,
+  and the argument for learning the mapping has to rest on something other than accuracy.
+- **Designed closer than learned.** The designed table beats the listeners' own consensus, which
+  would be a genuine finding against the resonance claim and is reported as such.
+
+Both errors are also compared against 90°, the error of guessing, since a learned mapping that
+beats the designed one while both are near chance has not established anything.
+
+Run at any sample size and reported with the sample size attached; at ten participants it is a
+pilot of the method, not an answer.
+
 ## 11. Stopping rule
 
 Collection closes on **30 November 2026**, or at 60 participants, whichever comes first. The
@@ -185,4 +212,5 @@ Every departure from this plan is recorded here with its date and reason.
 
 | Date | Change | Reason |
 |---|---|---|
+| 2026-11-11 | §10b added, before running it | A prediction test is a different question from §7 and was worth declaring rather than improvising. |
 | 2026-11-11 | §10a added | Sample size was stated without justification; simulated before any group analysis was run. |
