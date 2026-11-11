@@ -61,3 +61,47 @@ trial-by-trial records are therefore kept out of this repository, and only the g
 the participant weights — one number each, not anyone's answers — are published. From
 11 November the consent wording states that the anonymous responses may be published alongside
 the thesis, so later participants' records can be released; the earlier ones need asking first.
+
+## Section 10b: the prediction test, at ten participants
+
+Declared before it was run. Each participant is predicted by a mapping fitted to the other nine,
+and compared on the same person with See Harmony's designed table.
+
+```
+10 participants, each predicted by a mapping fitted to the other 9.
+
+code     learned error designed error     better
+L183               76°           107°    learned
+L196              112°           119°    learned
+L205               92°            85°   designed
+L287               81°            47°   designed
+L363               54°            88°    learned
+L507               80°           110°    learned
+L588               71°            93°    learned
+L590              106°            86°   designed
+L693               75°            74°   designed
+L706               56°            81°    learned
+mean               80°            89°
+
+guessing would average 90°
+
+paired Wilcoxon across participants: p = 0.3223  (learned better for 6 of 10)
+learned vs chance: 80° against 90° | designed vs chance: 89° against 90°
+```
+
+**The outcome is the middle one of the three declared: no difference.** The learned mapping is
+9° closer than the designed one, better for six participants of ten, p = 0.32.
+
+The more sobering number is the second column. The designed table — the colours See Harmony uses
+today — predicts a listener it has not seen at 89°, where guessing averages 90°.
+
+Both figures have to be read against how noisy the target is. On the chords they heard twice,
+these ten listeners' own two answers differ by 63° on average. The thing being predicted is
+measured with roughly that much error, so at this sample size neither mapping can be separated
+from the other or from chance. This is a working pipeline returning an uninformative answer, not
+evidence that a learned mapping does not help.
+
+Two different things would make this test informative, and they are not the same. More
+participants sharpens the fitted mapping. More answers per chord type from each person sharpens
+the target. The second is a change to the instrument — more repetitions per quality, fewer
+qualities, or a longer session — and is worth considering before any comparison study is run.
