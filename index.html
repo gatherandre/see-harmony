@@ -520,8 +520,11 @@ uniform float u_waveAmp, u_waveFront, u_waveW;
 // Gradient noise: the surface is grown from a few layers of it rather than
 // assembled from parts, so nothing on the orb repeats or lines up.
 vec3 hash3(vec3 p){
-    p = vec3(dot(p, vec3(127.1, 311.7, 74.7)), dot(p, vec3(269.5, 183.3, 246.1)), dot(p, vec3(113.5, 271.9, 124.6)));
-    return -1.0 + 2.0 * fract(sin(p) * 43758.5453123);
+    // No sine here: the sine version costs 24 transcendentals per noise sample,
+    // and the membrane needs nine samples for every vertex.
+    p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yxz + 33.33);
+    return -1.0 + 2.0 * fract((p.xxy + p.yxx) * p.zyx);
 }
 float gnoise(vec3 p){
     vec3 i = floor(p), f = fract(p), w = f * f * (3.0 - 2.0 * f);
