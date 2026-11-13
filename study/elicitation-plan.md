@@ -214,3 +214,5 @@ Every departure from this plan is recorded here with its date and reason.
 |---|---|---|
 | 2026-11-11 | §10b added, before running it | A prediction test is a different question from §7 and was worth declaring rather than improvising. |
 | 2026-11-11 | §10a added | Sample size was stated without justification; simulated before any group analysis was run. |
+| 2026-11-13 | A blank `trainingYears` is coded as **no formal training**, not as missing | The recruiting message told people to leave the field empty if they had none, so blank carries that meaning rather than being a skipped question. The decision was made after the split was known (12 with formal training, 8 without) and is recorded for that reason. |
+| 2026-11-13 | §8 wording: the training covariate is *formal* training only | The field asks for years of formal training, so the group coded as having none may include self-taught players who read no notation and took no lessons. Subgroup results are reported as "no formal training", never as "non-musicians" or "untrained". |
