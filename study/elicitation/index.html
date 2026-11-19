@@ -1,0 +1,730 @@
+<title>What Colour Is This Chord</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* One trial per screen, a single narrow column. The only colour on the page is the
+   colour the listener makes: every surface is a true neutral, because a grey biased
+   toward any hue would shift colour judgements by simultaneous contrast. That sets
+   aside the usual advice to tint neutrals toward an accent, deliberately. */
+:root{
+  --bg:#f4f4f4; --panel:#ffffff; --line:#d8d8d8; --line-2:#ebebeb;
+  --ink:#141414; --ink-2:#5e5e5e; --ink-3:#8c8c8c;
+  --btn:#1b1b1b; --btn-ink:#ffffff; --focus:#1b1b1b;
+  --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#101010; --panel:#1a1a1a; --line:#333333; --line-2:#262626;
+  --ink:#f2f2f2; --ink-2:#a8a8a8; --ink-3:#777777;
+  --btn:#f0f0f0; --btn-ink:#121212; --focus:#f0f0f0; color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#101010; --panel:#1a1a1a; --line:#333333; --line-2:#262626;
+  --ink:#f2f2f2; --ink-2:#a8a8a8; --ink-3:#777777;
+  --btn:#f0f0f0; --btn-ink:#121212; --focus:#f0f0f0; color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);line-height:1.55;margin:0;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0}
+.wrap{max-width:46rem;margin:0 auto;padding-block:16px 56px}
+h1{font-size:1.45rem;font-weight:600;letter-spacing:-0.01em;margin:0 0 6px;text-wrap:balance}
+h2{font-size:1.05rem;font-weight:600;margin:0 0 8px}
+p{margin:0 0 12px;max-width:62ch}
+.lede{color:var(--ink-2)}
+.small{font-size:.86rem;color:var(--ink-2)}
+.mono{font-family:var(--mono)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px}
+.stack{display:flex;flex-direction:column;gap:18px}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);
+  background:var(--panel);color:var(--ink);padding:9px 16px}
+button.primary{background:var(--btn);color:var(--btn-ink);border-color:var(--btn);font-weight:500}
+button:disabled{opacity:.42;cursor:not-allowed}
+button:focus-visible,input:focus-visible,select:focus-visible,canvas:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+input[type=text],input[type=number],select{font:inherit;background:var(--panel);color:var(--ink);
+  border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+label{display:block;font-size:.88rem;color:var(--ink-2);margin-bottom:4px}
+.field{margin-bottom:14px}
+.steps{color:var(--ink-2);padding-left:1.1em;margin:0 0 12px}
+.steps li{margin:4px 0}
+
+/* the facts someone wants before agreeing to take part */
+.facts{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 4px;padding:0;list-style:none}
+.facts li{font-family:var(--mono);font-size:.78rem;letter-spacing:.03em;color:var(--ink-2);
+  border:1px solid var(--line);border-radius:999px;padding:4px 12px;background:var(--panel)}
+
+/* language switch */
+.langbar{display:flex;justify-content:flex-end;margin-bottom:10px}
+.lang{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+.lang button{border:0;border-radius:0;padding:4px 12px;font-size:.78rem;font-family:var(--mono);
+  letter-spacing:.06em;background:transparent;color:var(--ink-3)}
+.lang button[aria-pressed="true"]{background:var(--btn);color:var(--btn-ink)}
+
+/* progress */
+.prog{height:3px;background:var(--line-2);border-radius:2px;overflow:hidden;margin-bottom:22px}
+.prog i{display:block;height:100%;background:var(--ink-3);width:0;transition:width .25s ease}
+.count{font-family:var(--mono);font-size:.8rem;color:var(--ink-3);letter-spacing:.04em}
+
+/* trial */
+.trial{display:grid;grid-template-columns:1fr;gap:26px}
+.play-row{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.playbtn{width:62px;height:62px;border-radius:50%;display:grid;place-items:center;
+  background:var(--btn);color:var(--btn-ink);border:none;padding:0}
+.playbtn svg{width:22px;height:22px;display:block}
+.pickers{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:26px}
+@media (max-width:620px){.pickers{grid-template-columns:1fr}}
+.pick h2{margin-bottom:2px}
+.pick .small{margin-bottom:12px}
+.disc-wrap{position:relative;width:100%;max-width:260px;aspect-ratio:1/1;margin:0 auto}
+canvas#disc{width:100%;height:100%;border-radius:50%;display:block;cursor:crosshair;
+  border:1px solid var(--line)}
+.marker{position:absolute;width:16px;height:16px;border-radius:50%;border:2px solid #fff;
+  box-shadow:0 0 0 1.5px #000;pointer-events:none;transform:translate(-50%,-50%);display:none}
+.slider{width:100%;accent-color:var(--ink-3)}
+.swatch{width:100%;height:54px;border-radius:8px;border:1px solid var(--line);margin-top:12px;
+  background:var(--line-2)}
+.blob-wrap{display:grid;place-items:center;min-height:200px}
+.blob-wrap svg{width:200px;height:200px;max-width:100%}
+.ticks{display:flex;justify-content:space-between;font-size:.76rem;color:var(--ink-3);margin-top:2px}
+.nav{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:4px}
+.status{font-size:.86rem;color:var(--ink-2);min-height:1.3em}
+textarea{width:100%;min-height:150px;font-family:var(--mono);font-size:.76rem;
+  background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px}
+@media (prefers-reduced-motion: reduce){.prog i{transition:none}}
+</style>
+
+<div class="wrap">
+  <div class="langbar">
+    <div class="lang" role="group" id="langGroup">
+      <button type="button" data-lang="pt" aria-pressed="true">PT</button>
+      <button type="button" data-lang="en" aria-pressed="false">EN</button>
+    </div>
+  </div>
+
+  <div class="prog" id="prog" hidden><i id="progBar"></i></div>
+
+  <!-- ─────────── welcome ─────────── -->
+  <section id="s-welcome" class="stack">
+    <div>
+      <h1 data-t="w.h1"></h1>
+      <ul class="facts">
+        <li data-t="w.f1"></li><li data-t="w.f2"></li><li data-t="w.f3"></li>
+      </ul>
+      <p class="lede" data-t="w.lede"></p>
+    </div>
+    <div class="panel stack">
+      <div><h2 data-t="w.a.h"></h2><p class="small" data-t="w.a.p"></p></div>
+      <div><h2 data-t="w.b.h"></h2><p class="small" data-t="w.b.p"></p></div>
+      <div><h2 data-t="w.c.h"></h2><p class="small" data-t="w.c.p"></p></div>
+    </div>
+    <div class="row"><button class="primary" id="toConsent" type="button" data-t="w.btn"></button></div>
+  </section>
+
+  <!-- ─────────── consent ─────────── -->
+  <section id="s-consent" class="stack" hidden>
+    <div>
+      <h1 data-t="c.h1"></h1>
+      <p class="lede" data-t="c.lede"></p>
+    </div>
+    <div class="panel stack">
+      <div><h2 data-t="c.a.h"></h2><p class="small" data-t="c.a.p"></p></div>
+      <div><h2 data-t="c.b.h"></h2><p class="small" data-t="c.b.p"></p></div>
+      <div><h2 data-t="c.c.h"></h2><p class="small" data-t="c.c.p"></p></div>
+    </div>
+    <div class="row"><button class="primary" id="toBg" type="button" data-t="c.btn"></button></div>
+  </section>
+
+  <!-- ─────────── background ─────────── -->
+  <section id="s-bg" class="stack" hidden>
+    <div>
+      <h1 data-t="b.h1"></h1>
+      <p class="lede" data-t="b.lede"></p>
+    </div>
+    <div class="panel">
+      <div class="field">
+        <label for="pcode" data-t="b.code"></label>
+        <input type="text" id="pcode" class="mono" maxlength="12" autocomplete="off" style="width:12ch">
+        <div class="small" style="margin-top:4px" data-t="b.codeNote"></div>
+      </div>
+      <div class="field">
+        <label for="train" data-t="b.train"></label>
+        <input type="number" id="train" min="0" max="80" step="1" style="width:9ch" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="instr" data-t="b.instr"></label>
+        <input type="text" id="instr" maxlength="40" style="width:22ch" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="synae" data-t="b.synae"></label>
+        <select id="synae">
+          <option value="">—</option>
+          <option value="never" data-t="b.syn.never"></option>
+          <option value="sometimes" data-t="b.syn.some"></option>
+          <option value="often" data-t="b.syn.often"></option>
+        </select>
+      </div>
+      <div class="field" style="margin-bottom:0">
+        <label for="cvd" data-t="b.cvd"></label>
+        <select id="cvd">
+          <option value="">—</option>
+          <option value="no" data-t="b.cvd.no"></option>
+          <option value="yes" data-t="b.cvd.yes"></option>
+          <option value="unsure" data-t="b.cvd.unsure"></option>
+        </select>
+        <div class="small" style="margin-top:4px" data-t="b.cvdNote"></div>
+      </div>
+    </div>
+    <div class="row"><button class="primary" id="toPractice" type="button" data-t="b.btn"></button></div>
+  </section>
+
+  <!-- ─────────── how it works ─────────── -->
+  <section id="s-intro" class="stack" hidden>
+    <div><h1 data-t="i.h1"></h1></div>
+    <div class="panel">
+      <ol class="steps">
+        <li data-t="i.s1"></li><li data-t="i.s2"></li><li data-t="i.s3"></li><li data-t="i.s4"></li>
+      </ol>
+      <p class="small" style="margin-bottom:0" data-t="i.note"></p>
+    </div>
+    <div class="row"><button class="primary" id="startPractice" type="button" data-t="i.btn"></button></div>
+  </section>
+
+  <!-- ─────────── trial ─────────── -->
+  <section id="s-trial" class="stack" hidden>
+    <div class="row" style="justify-content:space-between">
+      <span class="count" id="trialLabel">—</span>
+      <span class="count" id="phaseLabel"></span>
+    </div>
+    <div class="trial">
+      <div class="play-row">
+        <button class="playbtn" id="play" type="button" data-t-aria="t.replay">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+        </button>
+        <div>
+          <div class="small" id="playHint"></div>
+          <div class="count" id="replayCount"></div>
+        </div>
+      </div>
+
+      <div class="pickers">
+        <div class="pick">
+          <h2 data-t="t.colour"></h2>
+          <div class="small" data-t="t.colourHint"></div>
+          <div class="disc-wrap">
+            <canvas id="disc" width="520" height="520" tabindex="0" role="slider"
+                    data-t-aria="t.wheelAria" aria-valuemin="0" aria-valuemax="360" aria-valuenow="0"></canvas>
+            <div class="marker" id="marker"></div>
+          </div>
+          <div style="margin-top:14px">
+            <label for="light" data-t="t.light"></label>
+            <input type="range" id="light" class="slider" min="0.20" max="0.92" step="0.01" value="0.62">
+            <div class="ticks"><span data-t="t.dark"></span><span data-t="t.bright"></span></div>
+          </div>
+          <div class="swatch" id="swatch"></div>
+        </div>
+
+        <div class="pick">
+          <h2 data-t="t.shape"></h2>
+          <div class="small" data-t="t.shapeHint"></div>
+          <div class="blob-wrap">
+            <svg id="blob" viewBox="-130 -130 260 260" aria-hidden="true">
+              <path id="blobPath" d="" fill="currentColor" opacity="0.82"></path>
+            </svg>
+          </div>
+          <div>
+            <label for="spiky" data-t="t.smoothSharp"></label>
+            <input type="range" id="spiky" class="slider" min="0" max="1" step="0.01" value="0.5">
+            <div class="ticks"><span data-t="t.round"></span><span data-t="t.sharp"></span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="nav">
+        <span class="status" id="trialStatus"></span>
+        <button class="primary" id="next" type="button" disabled data-t="t.next"></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────── done ─────────── -->
+  <section id="s-done" class="stack" hidden>
+    <div>
+      <h1 data-t="d.h1"></h1>
+      <p class="lede" id="doneLine"></p>
+    </div>
+    <div class="panel stack">
+      <div class="row">
+        <button class="primary" id="copy" type="button" data-t="d.copy"></button>
+        <button id="save" type="button" hidden data-t="d.save"></button>
+      </div>
+      <div class="status" id="saveStatus"></div>
+      <textarea id="payload" readonly data-t-aria="d.textAria"></textarea>
+    </div>
+  </section>
+</div>
+
+<script>
+'use strict';
+const MAN = [["s01","maj",0],["s02","maj",4],["s03","maj",8],["s04","min",5],["s05","min",9],["s06","min",1],["s07","dom7",10],["s08","dom7",2],["s09","dom7",6],["s10","maj7",3],["s11","maj7",7],["s12","maj7",11],["s13","min7",8],["s14","min7",0],["s15","min7",4],["s16","hdim7",1],["s17","hdim7",5],["s18","hdim7",9],["s19","dim7",6],["s20","dim7",10],["s21","dim7",2],["s22","dim",11],["s23","dim",3],["s24","dim",7],["s25","aug",4],["s26","aug",8],["s27","aug",0],["s28","sus4",9],["s29","sus4",1],["s30","sus4",5]];
+const REPEATS = 4;                 // items shown twice, to measure how consistent a listener is
+const PRACTICE = ['p01', 'p02'];
+const $ = id => document.getElementById(id);
+
+/* ── copy, in both languages ────────────────────────────────────────────────────── */
+const T = {
+  pt: {
+    'w.h1': 'Que cor tem este acorde?',
+    'w.f1': '≈ 15 MINUTOS', 'w.f2': '30 ACORDES', 'w.f3': 'SEM FORMAÇÃO MUSICAL NECESSÁRIA',
+    'w.lede': 'André Guimarães pediu sua ajuda em um projeto de tese sobre se a música pode ser mostrada como cor de um jeito que as pessoas realmente consigam aprender a ler.',
+    'w.a.h': 'O que você vai fazer',
+    'w.a.p': 'Ouvir trinta acordes, um de cada vez, e escolher para cada um a cor e a forma que ele parece ter. São cerca de quinze minutos, e a página mostra quanto falta enquanto você avança. Não existem respostas certas.',
+    'w.b.h': 'Onde você está, e o login',
+    'w.b.p': 'Esta página está hospedada no claude.ai. Para salvar suas respostas é preciso uma conta gratuita da Claude — exigência do site, não do André. Ele não administra o site e não vê nada da sua conta. O que chega até ele é só o que você responder aqui: as cores, as formas e as perguntas de perfil que você quiser responder.',
+    'w.c.h': 'Se preferir não fazer login',
+    'w.c.p': 'Você ainda pode participar. No fim há um botão que copia suas respostas como texto, e você manda para o André do jeito que preferir.',
+    'w.btn': 'Continuar',
+
+    'c.h1': 'Antes de começar',
+    'c.lede': 'Três coisas que vale saber, e depois algumas perguntas sobre você.',
+    'c.a.h': 'Não existem respostas certas',
+    'c.a.p': 'Ninguém está testando seu ouvido nem sua teoria. O estudo quer descobrir se ouvintes diferentes chegam a cores parecidas — então o que importa é só como o som soa para você. Se um acorde não sugerir nada em especial, escolha o que parecer menos errado e siga em frente.',
+    'c.b.h': 'O que é registrado',
+    'c.b.p': 'Suas escolhas de cor e forma, quanto tempo levou cada uma, e as respostas de perfil da próxima tela. Nenhum nome, a não ser que você digite um, e nada sobre o seu aparelho. Os resultados entram na tese como figuras agrupadas, e as respostas anônimas — sem nome, sem contato, sem nada sobre o seu aparelho — podem ser publicadas junto com a tese, para que outras pessoas possam conferir a análise.',
+    'c.c.h': 'Na prática',
+    'c.c.p': 'Cerca de quinze minutos, sem pausa prevista — melhor começar quando tiver esse tempo livre. Fone de ouvido ou caixas de som decentes ajudam. Você pode parar a qualquer momento fechando a página, e nada é guardado se fizer isso. Deixe o brilho da tela no normal e evite filtros de luz noturna ou de cor quente, porque eles mudam a aparência das cores.',
+    'c.btn': 'Entendi — continuar',
+
+    'b.h1': 'Algumas coisas sobre você',
+    'b.lede': 'Tudo opcional, menos o código, que mantém suas respostas juntas sem usar seu nome.',
+    'b.code': 'Seu código',
+    'b.codeNote': 'Gerado para você. Mude se preferir.',
+    'b.train': 'Anos de formação musical ou prática séria',
+    'b.instr': 'Instrumento principal, se houver',
+    'b.synae': 'Você vê ou sente cores quando ouve sons?',
+    'b.syn.never': 'Não, nunca', 'b.syn.some': 'Às vezes, de leve', 'b.syn.often': 'Sim, com frequência',
+    'b.cvd': 'Tem dificuldade para distinguir certas cores?',
+    'b.cvd.no': 'Não', 'b.cvd.yes': 'Sim', 'b.cvd.unsure': 'Não sei',
+    'b.cvdNote': 'Perguntamos porque diferenças na visão de cores mudam o sentido destas respostas. Isso não impede você de participar.',
+    'b.btn': 'Continuar',
+
+    'i.h1': 'Como funciona',
+    'i.s1': 'Um som toca. Aperte o círculo para ouvir de novo, quantas vezes quiser.',
+    'i.s2': 'Escolha uma cor no círculo e ajuste se ela é mais clara ou mais escura.',
+    'i.s3': 'Ajuste a forma: lisa e redonda de um lado, afiada e cheia de pontas do outro.',
+    'i.s4': 'Aperte <b>Próximo som</b>.',
+    'i.note': 'Os dois primeiros são treino e não contam. Depois vêm trinta e quatro sons, uns quinze minutos no total. Vá pelo primeiro instinto em vez de ficar pensando muito.',
+    'i.btn': 'Começar',
+
+    't.practice': 'TREINO',
+    't.practiceHint': 'Treino — nada é registrado.',
+    't.listen': 'Ouça e escolha.',
+    't.replay': 'Ouvir o som de novo',
+    't.heard': n => 'ouvido ' + n + ' vezes',
+    't.left': m => '≈ ' + m + ' min restantes',
+    't.colour': 'Cor',
+    't.colourHint': 'Matiz ao redor do círculo, intensidade do centro para fora.',
+    't.wheelAria': 'Círculo de cores: matiz e intensidade',
+    't.light': 'Mais clara ou mais escura',
+    't.dark': 'escura', 't.bright': 'clara',
+    't.shape': 'Forma',
+    't.shapeHint': 'O quanto o som parece redondo ou afiado.',
+    't.smoothSharp': 'De lisa a afiada',
+    't.round': 'redonda', 't.sharp': 'pontuda',
+    't.next': 'Próximo som',
+    't.needColour': 'Escolha uma cor para continuar.',
+    't.needShape': 'Ajuste a forma para continuar.',
+
+    'd.h1': 'Pronto — obrigado',
+    'd.done': n => 'Isso é tudo — ' + n + ' sons.',
+    'd.doneC': (n, c) => 'Isso é tudo — ' + n + ' sons. Nos acordes que você ouviu duas vezes, suas duas cores ficaram a cerca de ' + c + '° de distância no círculo.',
+    'd.save': 'Salvar na minha conta',
+    'd.copy': 'Copiar minhas respostas',
+    'd.textAria': 'Suas respostas em texto',
+    'd.hint': 'Copie o texto abaixo e mande para o André — WhatsApp, e-mail, do jeito que preferir.',
+    'd.copied': 'Copiado. Mande para o André do jeito que preferir.',
+    'd.copyManual': 'Selecione o texto abaixo e copie manualmente.',
+    'd.saving': 'Salvando…',
+    'd.saved': 'Salvo. Pode fechar a página — e obrigado.',
+    'd.saveFail': 'Não deu para salvar. Use "Copiar minhas respostas" e mande o texto para o André.',
+    'd.noSave': 'Salvar não está disponível nesta conta — use "Copiar minhas respostas" e mande o texto para o André.'
+  },
+  en: {
+    'w.h1': 'What colour is this chord?',
+    'w.f1': '≈ 15 MINUTES', 'w.f2': '30 CHORDS', 'w.f3': 'NO MUSICAL TRAINING NEEDED',
+    'w.lede': 'André Guimarães has asked for your help with a thesis project on whether music can be shown as colour in a way people can actually learn to read.',
+    'w.a.h': 'What you will do',
+    'w.a.p': 'Listen to thirty chords, one at a time, and for each one choose the colour and the shape it seems to have. About fifteen minutes, and the page shows how much is left as you go. There are no right answers.',
+    'w.b.h': 'Where you are, and the sign-in',
+    'w.b.p': 'This page is hosted on claude.ai. Saving your answers there needs a free Claude account, which is the site’s requirement rather than André’s — he does not run it, and he sees nothing from your account. What reaches him is only what you enter on this page: the colours, the shapes, and whichever background answers you choose to give.',
+    'w.c.h': 'If you would rather not sign in',
+    'w.c.p': 'You can still take part. At the end there is a button that copies your answers as plain text, which you can send to André however suits you.',
+    'w.btn': 'Continue',
+
+    'c.h1': 'Before you start',
+    'c.lede': 'Three things worth knowing, then a few questions about you.',
+    'c.a.h': 'There are no right answers',
+    'c.a.p': 'Nobody is testing your ear or your theory. The study is trying to find out whether different listeners reach for similar colours — so the only thing that matters is what the sound seems like to you. If a chord suggests nothing in particular, pick whatever feels least wrong and move on.',
+    'c.b.h': 'What is recorded',
+    'c.b.p': 'Your colour and shape choices, how long each one took, and the background answers on the next screen. No name unless you type one, and nothing about your device. The results go into the thesis as grouped figures, and the anonymous responses — no name, no contact, nothing about your device — may be published alongside the thesis so that others can check the analysis.',
+    'c.c.h': 'Practical',
+    'c.c.p': 'About fifteen minutes, with no break built in — better to start when you have that time free. Headphones or decent speakers help. You can stop at any point by closing the page, and nothing is kept if you do. Please leave your screen at its normal brightness and avoid a night-shift or warm-colour filter, since those change what the colours look like.',
+    'c.btn': 'I understand — continue',
+
+    'b.h1': 'A few things about you',
+    'b.lede': 'All optional except the code, which keeps your answers together without using your name.',
+    'b.code': 'Your code',
+    'b.codeNote': 'Made up for you. Change it if you prefer.',
+    'b.train': 'Years of musical training or serious practice',
+    'b.instr': 'Main instrument, if any',
+    'b.synae': 'Do you see or feel colours when you hear sounds?',
+    'b.syn.never': 'No, never', 'b.syn.some': 'Sometimes, faintly', 'b.syn.often': 'Yes, regularly',
+    'b.cvd': 'Any difficulty telling certain colours apart?',
+    'b.cvd.no': 'No', 'b.cvd.yes': 'Yes', 'b.cvd.unsure': 'Not sure',
+    'b.cvdNote': 'Asked because colour-vision differences change what these answers mean. It does not stop you taking part.',
+    'b.btn': 'Continue',
+
+    'i.h1': 'How it works',
+    'i.s1': 'A sound plays. Press the circle to hear it again, as often as you like.',
+    'i.s2': 'Pick a colour on the wheel, and set how light or dark it should be.',
+    'i.s3': 'Set the shape: smooth and round at one end, sharp and many-pointed at the other.',
+    'i.s4': 'Press <b>Next sound</b>.',
+    'i.note': 'The first two are practice and are not counted. Then come thirty-four sounds, about fifteen minutes in all. Go with your first instinct rather than deliberating.',
+    'i.btn': 'Start',
+
+    't.practice': 'PRACTICE',
+    't.practiceHint': 'Practice — nothing is recorded.',
+    't.listen': 'Listen, then choose.',
+    't.replay': 'Play the sound again',
+    't.heard': n => 'heard ' + n + ' times',
+    't.left': m => '≈ ' + m + ' min left',
+    't.colour': 'Colour',
+    't.colourHint': 'Hue around the wheel, strength from the centre out.',
+    't.wheelAria': 'Colour wheel: hue and strength',
+    't.light': 'Lighter or darker',
+    't.dark': 'dark', 't.bright': 'light',
+    't.shape': 'Shape',
+    't.shapeHint': 'How round or how sharp the sound feels.',
+    't.smoothSharp': 'Smooth to sharp',
+    't.round': 'round', 't.sharp': 'sharp',
+    't.next': 'Next sound',
+    't.needColour': 'Pick a colour to continue.',
+    't.needShape': 'Set the shape to continue.',
+
+    'd.h1': 'Finished — thank you',
+    'd.done': n => 'That is everything — ' + n + ' sounds.',
+    'd.doneC': (n, c) => 'That is everything — ' + n + ' sounds. On the chords you heard twice, your two colours sat about ' + c + '° apart on the wheel.',
+    'd.save': 'Save to my account',
+    'd.copy': 'Copy my answers',
+    'd.textAria': 'Your answers as text',
+    'd.hint': 'Copy the text below and send it to André — WhatsApp, email, however suits you.',
+    'd.copied': 'Copied. Send it to André however suits you.',
+    'd.copyManual': 'Select the text below and copy it yourself.',
+    'd.saving': 'Saving…',
+    'd.saved': 'Saved. You can close the page — and thank you.',
+    'd.saveFail': 'That did not save. Use "Copy my answers" and send the text to André.',
+    'd.noSave': 'Saving is not available on this account — use "Copy my answers" and send the text to André.'
+  }
+};
+let lang = 'pt';
+const tr = k => T[lang][k];
+
+try {
+  const saved = localStorage.getItem('elicit-lang');
+  lang = (saved === 'en' || saved === 'pt') ? saved
+       : ((navigator.language || 'en').toLowerCase().startsWith('pt') ? 'pt' : 'en');
+} catch (_) { lang = (navigator.language || 'en').toLowerCase().startsWith('pt') ? 'pt' : 'en'; }
+
+function applyLang() {
+  document.documentElement.lang = lang === 'pt' ? 'pt-BR' : 'en';
+  document.querySelectorAll('[data-t]').forEach(el => {
+    const v = T[lang][el.dataset.t];
+    if (typeof v === 'string') { if (v.indexOf('<') >= 0) el.innerHTML = v; else el.textContent = v; }
+  });
+  document.querySelectorAll('[data-t-aria]').forEach(el => {
+    const v = T[lang][el.dataset.tAria];
+    if (typeof v === 'string') el.setAttribute('aria-label', v);
+  });
+  document.querySelectorAll('#langGroup button').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.lang === lang)));
+  refreshTrialCopy();
+  if (!$('s-done').hidden) showDoneLine();
+}
+$('langGroup').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  lang = b.dataset.lang;
+  try { localStorage.setItem('elicit-lang', lang); } catch (_) {}
+  applyLang();
+});
+
+/* ── OKLab, so the wheel is spaced the way the eye spaces colour, and matches the
+      colour space the prototype itself uses. ───────────────────────────────────── */
+function oklchToRgb(L, C, hDeg) {
+  const h = hDeg * Math.PI / 180, a = C * Math.cos(h), b = C * Math.sin(h);
+  const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+  const l = l_ * l_ * l_, m = m_ * m_ * m_, s = s_ * s_ * s_;
+  const lin = [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s];
+  const inGamut = lin.every(v => v >= -0.0012 && v <= 1.0012);
+  const enc = v => { v = Math.min(1, Math.max(0, v));
+    return Math.round(255 * (v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055)); };
+  return { rgb: lin.map(enc), inGamut };
+}
+const hex = ([r, g, b]) => '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+
+/* ── the colour wheel ───────────────────────────────────────────────────────────── */
+const disc = $('disc'), dctx = disc.getContext('2d');
+let L = 0.62, H = 0, Crel = 0, hasColour = false;
+const gamut = new Float32Array(361);   // the most chroma sRGB can show, per hue, at this lightness
+
+function computeGamut() {
+  for (let h = 0; h <= 360; h++) {
+    let lo = 0, hi = 0.42;
+    for (let i = 0; i < 14; i++) {
+      const mid = (lo + hi) / 2;
+      if (oklchToRgb(L, mid, h).inGamut) lo = mid; else hi = mid;
+    }
+    gamut[h] = lo;
+  }
+}
+const chroma = () => Crel * gamut[Math.round(H) % 361];
+
+function drawDisc() {
+  computeGamut();
+  const n = disc.width, r0 = n / 2, img = dctx.createImageData(n, n), d = img.data;
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const dx = x - r0 + 0.5, dy = y - r0 + 0.5, rad = Math.hypot(dx, dy), i = (y * n + x) * 4;
+      if (rad > r0) { d[i + 3] = 0; continue; }
+      const hDeg = (Math.atan2(-dy, dx) * 180 / Math.PI + 360) % 360;
+      const { rgb } = oklchToRgb(L, Math.min(1, rad / r0) * gamut[Math.round(hDeg) % 361], hDeg);
+      d[i] = rgb[0]; d[i + 1] = rgb[1]; d[i + 2] = rgb[2]; d[i + 3] = 255;
+    }
+  }
+  dctx.putImageData(img, 0, 0);
+  placeMarker();
+}
+function placeMarker() {
+  const m = $('marker');
+  if (!hasColour) { m.style.display = 'none'; return; }
+  const rad = Crel * 50, a = H * Math.PI / 180;
+  m.style.display = 'block';
+  m.style.left = (50 + rad * Math.cos(a)) + '%';
+  m.style.top = (50 - rad * Math.sin(a)) + '%';
+}
+function setSwatch() {
+  const { rgb } = oklchToRgb(L, chroma(), H);
+  $('swatch').style.background = hasColour ? hex(rgb) : 'var(--line-2)';
+  disc.setAttribute('aria-valuenow', Math.round(H));
+}
+function pickFrom(ev) {
+  const b = disc.getBoundingClientRect();
+  const px = (ev.clientX - b.left) / b.width - 0.5, py = (ev.clientY - b.top) / b.height - 0.5;
+  const rad = Math.min(0.5, Math.hypot(px, py));
+  H = (Math.atan2(-py, px) * 180 / Math.PI + 360) % 360;
+  Crel = rad / 0.5;
+  hasColour = true; placeMarker(); setSwatch(); refreshNext();
+}
+disc.addEventListener('pointerdown', e => { disc.setPointerCapture(e.pointerId); pickFrom(e); });
+disc.addEventListener('pointermove', e => { if (e.buttons) pickFrom(e); });
+disc.addEventListener('keydown', e => {
+  const step = e.shiftKey ? 15 : 5;
+  if (e.key === 'ArrowRight') { H = (H + step) % 360; hasColour = true; }
+  else if (e.key === 'ArrowLeft') { H = (H - step + 360) % 360; hasColour = true; }
+  else if (e.key === 'ArrowUp') { Crel = Math.min(1, Crel + 1 / 12); hasColour = true; }
+  else if (e.key === 'ArrowDown') { Crel = Math.max(0, Crel - 1 / 12); hasColour = true; }
+  else return;
+  e.preventDefault(); placeMarker(); setSwatch(); refreshNext();
+});
+$('light').addEventListener('input', e => { L = +e.target.value; drawDisc(); setSwatch(); });
+
+/* ── the shape control ──────────────────────────────────────────────────────────── */
+let spiky = 0.5, shapeTouched = false, L0 = 0.62, spiky0 = 0.5;
+function drawBlob() {
+  const lobes = Math.round(3 + spiky * 7), amp = 0.05 + spiky * 0.24, sharp = 1 + 5 * spiky;
+  let dPath = '';
+  for (let i = 0; i <= 240; i++) {
+    const t = i / 240 * Math.PI * 2;
+    const k = (Math.pow(0.5 + 0.5 * Math.cos(lobes * t), sharp) - 0.3)
+            + 0.45 * (Math.pow(0.5 + 0.5 * Math.cos((lobes + 3) * t + 1.1), sharp) - 0.3);
+    const r = 86 * (1 + amp * k);
+    dPath += (i ? 'L' : 'M') + (r * Math.cos(t)).toFixed(2) + ' ' + (r * Math.sin(t)).toFixed(2);
+  }
+  $('blobPath').setAttribute('d', dPath + 'Z');
+}
+$('spiky').addEventListener('input', e => { spiky = +e.target.value; shapeTouched = true; drawBlob(); refreshNext(); });
+
+/* ── stimuli and order ──────────────────────────────────────────────────────────── */
+const audio = {}, order = [];
+let idx = 0, phase = 'practice', tStart = 0, replays = 0, results = [], meta = {};
+
+function hash32(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function rngFrom(seed) { let a = seed; return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function buildOrder(code) {
+  const rnd = rngFrom(hash32(code || 'anon'));
+  const main = MAN.map(m => m[0]);
+  for (let i = main.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [main[i], main[j]] = [main[j], main[i]]; }
+  // The repeated items are taken from the middle of the run, never from the opening
+  // trials. The first few answers are the ones where someone is still working the
+  // controls out, so comparing one of those with a settled answer measures the
+  // learning curve rather than the listener.
+  const out = main.slice();
+  [8, 10, 12, 14].slice(0, REPEATS).forEach((from, k) => {
+    out.splice(22 + k * 3 + Math.floor(rnd() * 2), 0, main[from]);
+  });
+  return out;
+}
+function preload() {
+  [...PRACTICE, ...MAN.map(m => m[0])].forEach(id => {
+    const a = new Audio('audio/' + id + '.mp3'); a.preload = 'auto'; audio[id] = a;
+  });
+}
+function playCurrent(countIt) {
+  const id = phase === 'practice' ? PRACTICE[idx] : order[idx];
+  const a = audio[id];
+  if (!a) return;
+  try { a.currentTime = 0; const p = a.play(); if (p) p.catch(() => {}); } catch (_) {}
+  if (countIt) { replays++; refreshTrialCopy(); }
+}
+$('play').addEventListener('click', () => playCurrent(true));
+
+/* How much longer this will take, from how long the answers so far actually took,
+   so the estimate suits the person rather than an average of other people. */
+function minutesLeft() {
+  if (phase !== 'main') return null;
+  const left = order.length - idx;
+  const ms = results.length >= 3
+    ? [...results.map(r => r.ms)].sort((a, b) => a - b)[results.length >> 1]
+    : 26000;
+  return Math.max(1, Math.round(left * (ms + 1400) / 60000));
+}
+function refreshTrialCopy() {
+  if ($('s-trial').hidden) return;
+  const m = minutesLeft();
+  $('phaseLabel').textContent = phase === 'practice' ? tr('t.practice') : (m ? tr('t.left')(m) : '');
+  $('playHint').textContent = phase === 'practice' ? tr('t.practiceHint') : tr('t.listen');
+  $('replayCount').textContent = replays > 1 ? tr('t.heard')(replays) : '';
+  refreshNext();
+}
+function refreshNext() {
+  $('next').disabled = !(hasColour && shapeTouched);
+  $('trialStatus').textContent = $('next').disabled
+    ? (hasColour ? tr('t.needShape') : tr('t.needColour')) : '';
+}
+function showTrial() {
+  const total = phase === 'practice' ? PRACTICE.length : order.length;
+  $('trialLabel').textContent = (idx + 1) + ' / ' + total;
+  $('progBar').style.width = (phase === 'practice' ? 0 : (idx / order.length) * 100) + '%';
+  // Both sliders start somewhere different every trial. A fixed starting point is an
+  // answer in itself: lightness used to carry over from the previous trial, and a
+  // third of the first pilot's shape answers sat within a nudge of the midpoint the
+  // slider opened on.
+  hasColour = false; Crel = 0; H = 0; shapeTouched = false;
+  L = Math.round((0.34 + Math.random() * 0.46) * 100) / 100;
+  spiky = Math.round((0.12 + Math.random() * 0.76) * 100) / 100;
+  L0 = L; spiky0 = spiky;
+  $('light').value = String(L); $('spiky').value = String(spiky);
+  drawDisc(); drawBlob(); setSwatch();
+  replays = 1; tStart = performance.now();
+  refreshTrialCopy();
+  playCurrent(false);
+}
+$('next').addEventListener('click', () => {
+  if (phase === 'main') {
+    const id = order[idx], m = MAN.find(x => x[0] === id);
+    const C = chroma(), { rgb } = oklchToRgb(L, C, H);
+    results.push({ i: idx, id, quality: m[1], root: m[2],
+      L: +L.toFixed(3), C: +C.toFixed(4), Crel: +Crel.toFixed(3), H: +H.toFixed(1), hex: hex(rgb),
+      spiky: +spiky.toFixed(2), ms: Math.round(performance.now() - tStart), heard: replays,
+      startL: L0, startSpiky: spiky0 });   // kept so the analysis can check for leftover anchoring
+  }
+  idx++;
+  const total = phase === 'practice' ? PRACTICE.length : order.length;
+  if (idx >= total) {
+    if (phase === 'practice') { phase = 'main'; idx = 0; showTrial(); }
+    else finish();
+  } else showTrial();
+});
+
+/* ── finishing ──────────────────────────────────────────────────────────────────── */
+function consistency() {
+  const seen = {}, diffs = [];
+  results.forEach(r => { if (seen[r.id]) {
+    let d = Math.abs(r.H - seen[r.id].H) % 360; if (d > 180) d = 360 - d; diffs.push(d);
+  } else seen[r.id] = r; });
+  if (!diffs.length) return null;
+  return Math.round(diffs.reduce((a, b) => a + b, 0) / diffs.length);
+}
+function payload() {
+  return { code: meta.code, lang, started: meta.started, finished: new Date().toISOString(),
+    background: { trainingYears: meta.train, instrument: meta.instr, colourWithSound: meta.synae, colourVision: meta.cvd },
+    repeatHueSpread: consistency(), n: results.length, responses: results };
+}
+function showDoneLine() {
+  const c = consistency();
+  $('doneLine').textContent = c === null ? tr('d.done')(results.length) : tr('d.doneC')(results.length, c);
+}
+function finish() {
+  $('s-trial').hidden = true; $('prog').hidden = true; $('s-done').hidden = false;
+  showDoneLine();
+  $('saveStatus').textContent = tr('d.hint');
+  $('payload').value = JSON.stringify(payload(), null, 1);
+  window.scrollTo(0, 0);
+}
+$('copy').addEventListener('click', async () => {
+  const t = $('payload');
+  try { await navigator.clipboard.writeText(t.value); $('saveStatus').textContent = tr('d.copied'); }
+  catch (_) { t.focus(); t.select(); $('saveStatus').textContent = tr('d.copyManual'); }
+});
+
+let db = null, myId = null;
+$('save').addEventListener('click', async () => {
+  if (!db || !myId) { $('saveStatus').textContent = tr('d.noSave'); return; }
+  $('save').disabled = true; $('saveStatus').textContent = tr('d.saving');
+  try {
+    // One document per person, which only André and his editors can read back.
+    await db.doc('responses/' + myId).set(payload());
+    $('saveStatus').textContent = tr('d.saved');
+  } catch (e) {
+    $('save').disabled = false;
+    $('saveStatus').textContent = tr('d.saveFail');
+  }
+});
+
+/* ── screens ────────────────────────────────────────────────────────────────────── */
+function show(id) { ['s-welcome', 's-consent', 's-bg', 's-intro', 's-trial', 's-done'].forEach(s => { $(s).hidden = (s !== id); }); window.scrollTo(0, 0); }
+$('pcode').value = 'L' + Math.floor(100 + Math.random() * 900);
+$('toConsent').addEventListener('click', () => show('s-consent'));
+$('toBg').addEventListener('click', () => show('s-bg'));
+$('toPractice').addEventListener('click', () => {
+  meta = { code: ($('pcode').value || 'anon').trim().slice(0, 12), train: $('train').value, instr: $('instr').value.trim(),
+           synae: $('synae').value, cvd: $('cvd').value, started: new Date().toISOString() };
+  order.length = 0; buildOrder(meta.code).forEach(x => order.push(x));
+  show('s-intro');
+});
+$('startPractice').addEventListener('click', () => {
+  preload(); phase = 'practice'; idx = 0;
+  show('s-trial'); $('prog').hidden = false; showTrial();
+});
+
+applyLang();
+drawDisc(); drawBlob(); setSwatch();
+
+// Saving only works for an account with write access to this artifact, which is almost
+// nobody. The button stays hidden until both capabilities resolve, so the final screen
+// offers one action that always works: copy the text and send it.
+function maybeOfferSave() { if (db && myId) $('save').hidden = false; }
+if (window.claude && window.claude.use) {
+  window.claude.use('db').then(ns => { db = ns; maybeOfferSave(); }).catch(() => { db = null; });
+  window.claude.use('user').then(async ns => {
+    try { myId = ns ? await ns.id() : null; } catch (_) { myId = null; }
+    maybeOfferSave();
+  }).catch(() => { myId = null; });
+}
+</script>

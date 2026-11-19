@@ -1,107 +1,85 @@
-# Elicitation: interim result
+# Elicitation study: interim results
 
-**2026-11-11 — 10 participants.** Interim. Collection continues under the
-stopping rule in `elicitation-plan.md`; these numbers will change, and are published as they stand
-so that the analysis is visible while it happens rather than only once it has finished.
+**32 listeners, as of 19 November 2026.** Nobody excluded. Collection closes 30 November
+or at 60 participants, whichever comes first (plan, §11).
 
-Produced by `primary.py`, which implements the plan and nothing else. Nobody is excluded.
+Aggregate figures only. Individual responses are not published; see
+`elicitation/README.md`.
 
-```
-10 participants, nobody excluded.  10000 permutations.
+## Hue — the pre-registered analysis (§6, §7)
 
-chord quality  agreement         p    Holm p   listener colour
-major 7th          0.701    0.0089    0.0890      74°
-minor              0.636    0.0185    0.1665     247°
-diminished         0.444    0.1725    1.0000     271°
-augmented          0.371    0.2967    1.0000     270°
-sus4               0.322    0.4055    1.0000     159°
-minor 7th          0.314    0.4166    1.0000      80°
-half-dim           0.312    0.4289    1.0000     256°
-dim 7th            0.220    0.6639    1.0000     297°
-dominant 7th       0.146    0.8377    1.0000      13°
-major              0.099    0.9246    1.0000     200°
+Weighted circular mean per chord quality, weights = within × spread from each listener's
+own answers, permutation null with quality labels shuffled within each participant,
+10,000 permutations, Holm correction across the ten qualities.
 
-agreement is the weighted resultant length: 1.00 = every listener the same hue.
+| chord quality | agreement | Holm p | listeners | designed | apart |
+|---|---|---|---|---|---|
+| minor | 0.652 | **0.0010** | 249° | 235° | 14° |
+| major 7th | 0.590 | **0.0018** | 60° | 288° | **132°** |
+| augmented | 0.627 | **0.0018** | 260° | 340° | 80° |
+| diminished | 0.595 | **0.0028** | 274° | 348° | 74° |
+| major | 0.313 | 1.00 | — | | |
+| sus4 | 0.302 | 1.00 | — | | |
+| minor 7th | 0.222 | 1.00 | — | | |
+| half-dim | 0.188 | 1.00 | — | | |
+| dim 7th | 0.112 | 1.00 | — | | |
+| dominant 7th | 0.038 | 1.00 | — | | |
 
-For the qualities that pass, the distance from the designed colour:
-  none
+Agreement is the weighted resultant length: 1.00 would be every listener on the same hue.
 
-participant weights: L183 0.25, L196 0.49, L205 0.30, L287 0.57, L363 0.40, L507 0.40, L588 0.26, L590 0.36, L693 0.19, L706 0.28
-```
+## The within-root null (§13, 15 Nov)
 
-## What this is and is not
+A stricter test. Quality labels are shuffled **within each root**, so each listener's
+root-to-hue tendency survives the shuffle and only the quality mapping is destroyed.
+Minor, diminished and major 7th survive it. Augmented does not survive it consistently,
+and is excluded from the main claim on separate grounds — its three stimuli are one
+chord in three voicings.
 
-**Nothing passes correction at ten participants.** Major 7th and minor both sit below 0.05 before
-the correction for testing ten chord types, and above it after.
+**The headline is three qualities: minor, diminished, major 7th.**
 
-At nine participants major 7th did pass, at Holm p = 0.046, and the note written at the time said
-one more participant could move it either way. The tenth moved it: the agreement fell from 0.741
-to 0.701 and the corrected p from 0.046 to 0.089. That is the ordinary behaviour of a result
-sitting on the threshold, and it is recorded here rather than quietly replaced, because a reader
-who only ever sees the final number cannot tell the difference between a finding and a coin that
-landed well.
+## The other channels — exploratory (§13, 13 and 19 Nov)
 
-Minor moved the other way over the same step, from a raw p of 0.030 to 0.019.
+| | hue | lightness | chroma | shape |
+|---|---|---|---|---|
+| major 7th | ✓ 60° | ✓ 0.75 | ✓ 0.14 | ✓ sharper |
+| minor | ✓ 249° | — | — | ✓ 0.36, smoothest |
+| diminished | ✓ 274° | — | — | — |
+| dim 7th | — | — | — | ✓ sharper |
 
-The plan's own power table says that at ten listeners only the strongest effects are visible.
-Both candidates look like moderate effects, which the table puts at 59 % detection at ten and
-90 % at fifteen. Fifteen to twenty participants should settle both.
+Major 7th is the only quality that agrees on all four channels. Minor agrees on hue and
+shape but not on lightness, which argues against the common claim that minor chords are
+heard as dark. Shape runs on the 30 listeners who used the corrected instrument (§3).
 
-Two qualities that looked convincing at two to four participants — minor and dominant 7th — were
-named at the time as solid. Dominant 7th is now ninth of ten. They are recorded because they are
-the reason the plan was written before the analysis was run.
+## Generalisation (§10b, renamed from "prediction" 19 Nov)
 
-No additional test has been run on these data beyond the one the plan specifies, and nothing has
-been changed in response to a result.
+Each listener held out, the group mapping fitted on the other 31, both mappings scored
+against that listener's own mean directions.
 
-## Why the per-response files are not here
+| | mean error |
+|---|---|
+| mapping learned from the other listeners | **69°** |
+| See Harmony's designed table | 87° |
+| guessing | 90° |
 
-Participants up to this point were told their answers would appear as grouped figures. The
-trial-by-trial records are therefore kept out of this repository, and only the group result and
-the participant weights — one number each, not anyone's answers — are published. From
-11 November the consent wording states that the anonymous responses may be published alongside
-the thesis, so later participants' records can be released; the earlier ones need asking first.
+Learned closer for 28 of 32; paired Wilcoxon p = 0.0001. The advantage is concentrated
+in the qualities where listeners agreed. Where they did not — dominant 7th especially —
+the learned mapping is worse than the designed one, which is why a deployed map should
+take learned values only where agreement was demonstrated.
 
-## Section 10b: the prediction test, at ten participants
+## Robustness
 
-Declared before it was run. Each participant is predicted by a mapping fitted to the other nine,
-and compared on the same person with See Harmony's designed table.
+- **Equal weights.** Counting every listener equally gives the same four qualities in
+  the same order. The weighting is not doing the work.
+- **Forty tests.** Four channels × ten qualities corrected as one family rather than
+  four: nine of the ten significant results survive. The exception is the shape result
+  for diminished 7th (0.0224 → 0.0868). `family40.py`.
+- **Training.** 12 listeners report formal training (median 30 years), 20 report none.
+  Mean weight 0.319 and 0.315 respectively — formal training does not predict how
+  informative a listener's answers are. `split_training.py`.
 
-```
-10 participants, each predicted by a mapping fitted to the other 9.
+## Sample
 
-code     learned error designed error     better
-L183               76°           107°    learned
-L196              112°           119°    learned
-L205               92°            85°   designed
-L287               81°            47°   designed
-L363               54°            88°    learned
-L507               80°           110°    learned
-L588               71°            93°    learned
-L590              106°            86°   designed
-L693               75°            74°   designed
-L706               56°            81°    learned
-mean               80°            89°
-
-guessing would average 90°
-
-paired Wilcoxon across participants: p = 0.3223  (learned better for 6 of 10)
-learned vs chance: 80° against 90° | designed vs chance: 89° against 90°
-```
-
-**The outcome is the middle one of the three declared: no difference.** The learned mapping is
-9° closer than the designed one, better for six participants of ten, p = 0.32.
-
-The more sobering number is the second column. The designed table — the colours See Harmony uses
-today — predicts a listener it has not seen at 89°, where guessing averages 90°.
-
-Both figures have to be read against how noisy the target is. On the chords they heard twice,
-these ten listeners' own two answers differ by 63° on average. The thing being predicted is
-measured with roughly that much error, so at this sample size neither mapping can be separated
-from the other or from chance. This is a working pipeline returning an uninformative answer, not
-evidence that a learned mapping does not help.
-
-Two different things would make this test informative, and they are not the same. More
-participants sharpens the fitted mapping. More answers per chord type from each person sharpens
-the target. The second is a change to the instrument — more repetitions per quality, fewer
-qualities, or a longer session — and is worth considering before any comparison study is run.
+32 listeners, predominantly Brazilian, recruited through the author's own contacts.
+16 Portuguese, 4 English at the time of the last count; guitar is the most common
+instrument. One reports colour-vision difficulty. This is a convenience sample and every
+claim is a claim about these listeners.
