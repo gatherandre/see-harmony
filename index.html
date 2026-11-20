@@ -836,6 +836,9 @@ let cv, cx2, W, H;
 const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
 const lerp=(a,b,t)=>a+(b-a)*clamp(t,0,1);
 const ema=(c,t,a)=>c+a*(t-c);
+// Hue is an angle, so it cannot be blended linearly: 350 to 10 must travel 20 degrees, not
+// 340. This takes the shorter way round the wheel and keeps the result in [0,360).
+const emaHue=(c,t,a)=>{ const d=((t-c+540)%360)-180; return (c+a*d+360)%360; };
 
 function hsvCss(h,s,v,a=1){
     h=((h%360)+360)%360;
@@ -2163,14 +2166,17 @@ function processVisuals(){
 
     if(hasSignal){
         V.skyL=ema(V.skyL,skyL,0.08); V.skyA=ema(V.skyA,skyA,0.06); V.skyB=ema(V.skyB,skyB,0.06);
-        V.orbH=ema(V.orbH,currentChord.hue,0.05);
+        // Hue settles faster than saturation and value. At 0.05 a chord change took about a
+        // second to arrive, and with chords every 2.5s the orb spent a third of its time in
+        // colours belonging to no chord -- visible as a rainbow ribbon and a teal major 7th.
+        V.orbH=emaHue(V.orbH,currentChord.hue,0.16);
         V.orbS=ema(V.orbS,currentChord.sat,0.05);
         V.orbV=ema(V.orbV,currentChord.val,0.05);
         V.orbR=ema(V.orbR,dim*0.09*(1+(FERRO.on&&FERRO.an?0.10*FERRO.pulse:0))+S.onset*dim*0.09,0.28);
         V.glow=ema(V.glow,clamp(rms*80,0.25,1.0),0.18);
     } else {
         V.skyL=ema(V.skyL,0.30,0.003); V.skyA=ema(V.skyA,LAB_COOL[1]*0.5,0.003); V.skyB=ema(V.skyB,LAB_COOL[2]*0.5,0.003);
-        V.orbH=ema(V.orbH,ambH,0.003); V.orbS=ema(V.orbS,0.55,0.003); V.orbV=ema(V.orbV,0.45,0.003);
+        V.orbH=emaHue(V.orbH,ambH,0.003); V.orbS=ema(V.orbS,0.55,0.003); V.orbV=ema(V.orbV,0.45,0.003);
         V.orbR=ema(V.orbR,dim*0.07,0.04); V.glow=ema(V.glow,0.28,0.04);
     }
 }
