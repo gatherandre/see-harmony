@@ -277,6 +277,12 @@ function applyMap(){
     CHORD_MAP = listenerMap ? CHORD_MAP_LISTENER : CHORD_MAP_DESIGNED;
     const b=document.getElementById('btn-map');
     if(b){ b.classList.toggle('active',listenerMap); b.textContent = listenerMap?'Listener map':'Designed map'; }
+    // The orb's colour is computed when the chord LABEL changes and then held, so the chord
+    // on screen keeps its old colour unless it is recomputed here. Without this the table
+    // appears not to switch until the next chord, which is the one moment you cannot compare.
+    if(typeof currentChord!=='undefined' && currentChord.label){
+        const c=chordColour(currentChord.label); if(c) currentChord=c;
+    }
     // Ribbon segments store the colour they were drawn with, so recolour them from their
     // labels; otherwise switching tables mid-take leaves a two-tone ribbon.
     if(typeof ribbon!=='undefined' && ribbon.length){
