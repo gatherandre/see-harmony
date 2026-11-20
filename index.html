@@ -112,6 +112,7 @@
                 <button class="btn"        id="btn-review" onclick="setMode('review')">Review</button>
                 <button class="btn"        id="btn-colour" onclick="toggleColourOnly()" title="Hide chord names and readouts (C)">Colour only</button>
                 <button class="btn"        id="btn-ferro"  onclick="toggleFerro()" title="Orb shape follows the sound's energy and texture (F)">Ferrofluid</button>
+                <button class="btn active" id="btn-map"    onclick="toggleMap()" title="Chord colours learned from 32 listeners, or the pre-study designed table (L)">Listener map</button>
             </div>
             <div class="btn-group">
                 <button class="btn active" id="btn-mic"  onclick="switchToMic()">⬤ Mic</button>
@@ -182,7 +183,9 @@ const HARM_WIN  = 45;   // ~0.75s at 60fps — fast enough for chord changes
 const BASS_BIAS = 4.0;   // multiply weight of bass octave bins
 const BASS_HZ   = 500;   // threshold below which bass bias applies
 
-const CHORD_MAP = {
+// The table as designed: hues chosen in advance from Palmer et al. (2013) for the
+// mode axis and from musical tradition for the rest.
+const CHORD_MAP_DESIGNED = {
     maj:    {h:42, s:0.95,v:0.92,sfx:''},
     min:    {h:235,s:0.88,v:0.65,sfx:'m'},
     dim:    {h:348,s:0.72,v:0.40,sfx:'dim'},
@@ -195,6 +198,38 @@ const CHORD_MAP = {
     minmaj7:{h:210,s:0.90,v:0.68,sfx:'mM7'},
     sus:    {h:58, s:0.70,v:0.82,sfx:'sus'},
 };
+
+// The listener-informed table. Three hues come from the elicitation study of 32 listeners
+// (study/elicitation-plan.md): the weighted circular mean for each quality that passed the
+// Holm-corrected permutation test AND survived the within-root null, which separates chord
+// quality from root pitch. They are marked `from:'listeners'` and must not be changed
+// without new data.
+//
+// The other eight are design choices. Those chord types showed no shared mapping among
+// listeners, so there is no evidence to honour and the designer is free to place them.
+// They were moved because major 7th's listener hue (60) lands 2 degrees from sus4's
+// designed hue (58) and 18 from major's (42), which would collapse the one distinction
+// Section 5.4 of the paper gives as the reason the semantic layer exists at all.
+// minmaj7 did not appear in the study and is nudged clear of min7.
+//
+// Saturation and value are unchanged throughout. The study's lightness and chroma results
+// are in OKLab and this table is HSV; converting them is a separate piece of work.
+const CHORD_MAP_LISTENER = {
+    maj:    {h:34, s:0.95,v:0.92,sfx:'',      from:'designer'},
+    min:    {h:249,s:0.88,v:0.65,sfx:'m',     from:'listeners'},
+    dim:    {h:274,s:0.72,v:0.40,sfx:'dim',   from:'listeners'},
+    aug:    {h:325,s:0.60,v:0.35,sfx:'aug',   from:'designer'},
+    maj7:   {h:60, s:0.78,v:0.82,sfx:'maj7',  from:'listeners'},
+    min7:   {h:200,s:0.82,v:0.72,sfx:'m7',    from:'designer'},
+    dom7:   {h:8,  s:1.00,v:0.88,sfx:'7',     from:'designer'},
+    dim7:   {h:345,s:0.68,v:0.38,sfx:'dim7',  from:'designer'},
+    m7b5:   {h:310,s:0.65,v:0.42,sfx:'m7b5',  from:'designer'},
+    minmaj7:{h:225,s:0.90,v:0.68,sfx:'mM7',   from:'designer'},
+    sus:    {h:130,s:0.70,v:0.82,sfx:'sus',   from:'designer'},
+};
+
+// Which table is live. Switched by the button, the L key, or ?map=designed / ?map=listener.
+let CHORD_MAP = CHORD_MAP_LISTENER;
 const CHORD_TMPL = {
     maj:    [1,0,0,0,1,0,0,1,0,0,0,0],
     min:    [1,0,0,1,0,0,0,1,0,0,0,0],
@@ -234,6 +269,28 @@ const URLP = new URLSearchParams(location.search);
 const SHOW_STEREO = URLP.get('stereo')==='1';
 let colourOnly = URLP.get('colouronly')==='1' || URLP.get('coloronly')==='1';
 try{ if(!URLP.has('colouronly') && !URLP.has('coloronly') && localStorage.getItem('sh-colour-only')==='1') colourOnly=true; }catch(_){}
+
+// ── Which colour table (?map=designed keeps the pre-study one) ──
+let listenerMap = URLP.get('map')!=='designed';
+try{ if(!URLP.has('map') && localStorage.getItem('sh-map')==='designed') listenerMap=false; }catch(_){}
+function applyMap(){
+    CHORD_MAP = listenerMap ? CHORD_MAP_LISTENER : CHORD_MAP_DESIGNED;
+    const b=document.getElementById('btn-map');
+    if(b){ b.classList.toggle('active',listenerMap); b.textContent = listenerMap?'Listener map':'Designed map'; }
+    // Ribbon segments store the colour they were drawn with, so recolour them from their
+    // labels; otherwise switching tables mid-take leaves a two-tone ribbon.
+    if(typeof ribbon!=='undefined' && ribbon.length){
+        for(const seg of ribbon){
+            const c=chordColour(seg.label);
+            if(c){ seg.h=c.hue; seg.s=c.sat; seg.v=c.val; }
+        }
+    }
+}
+function toggleMap(){
+    listenerMap=!listenerMap;
+    try{ localStorage.setItem('sh-map',listenerMap?'listener':'designed'); }catch(_){}
+    applyMap();
+}
 function applyColourOnly(){
     document.body.classList.toggle('colour-only',colourOnly);
     const b=document.getElementById('btn-colour'); if(b) b.classList.toggle('active',colourOnly);
@@ -2351,6 +2408,7 @@ function runDiagnostic(){
 }
 
 applyColourOnly();
+applyMap();
 initFerroPanel();
 if(URLP.get('debug')==='1') document.body.classList.add('debug');
 cv=document.getElementById('canvas'); cx2=cv.getContext('2d');
@@ -2364,6 +2422,7 @@ window.addEventListener('keydown',e=>{
     if(e.key==='m'||e.key==='M') switchToMic();
     if(e.key==='c'||e.key==='C') toggleColourOnly();
     if(e.key==='f'||e.key==='F') toggleFerro();
+    if(e.key==='l'||e.key==='L') toggleMap();
     if((e.key==='t'||e.key==='T') && FERRO.on) toggleFerroPanel();
     if(e.key===' '){e.preventDefault();inputMode==='mic'?toggleRecord():togglePlayPause();}
 });
