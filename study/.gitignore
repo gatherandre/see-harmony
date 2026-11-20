@@ -1,3 +1,10 @@
-responses/
+# Participant responses are never committed. Participants were told their answers
+# would be used for the study, and the first ten saw wording that did not cover
+# publication of their individual rows. Aggregate results go in results-interim.md.
 data/
+responses/
+
+# Belt and braces: no JSON from anywhere under study/ unless force-added.
+# elicitation/manifest.json is force-added on purpose — it describes the stimuli,
+# not the people, and the study cannot be reproduced without it.
 *.json
