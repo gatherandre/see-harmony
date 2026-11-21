@@ -73,13 +73,13 @@ take learned values only where agreement was demonstrated.
 - **Forty tests.** Four channels × ten qualities corrected as one family rather than
   four: nine of the ten significant results survive. The exception is the shape result
   for diminished 7th (0.0224 → 0.0868). `family40.py`.
-- **Training.** 12 listeners report formal training (median 30 years), 20 report none.
-  Mean weight 0.319 and 0.315 respectively — formal training does not predict how
+- **Training.** 20 listeners report formal training (median 28 years), 12 report none.
+  Mean weight 0.327 and 0.318 respectively — formal training does not predict how
   informative a listener's answers are. `split_training.py`.
 
 ## Sample
 
 32 listeners, predominantly Brazilian, recruited through the author's own contacts.
-16 Portuguese, 4 English at the time of the last count; guitar is the most common
-instrument. One reports colour-vision difficulty. This is a convenience sample and every
+23 took it in Portuguese, 9 in English; guitar is by far the most common instrument.
+Median session length 5.8 minutes. One reports colour-vision difficulty. This is a convenience sample and every
 claim is a claim about these listeners.
